@@ -121,13 +121,30 @@ export function ImportadosView({ onBack }: Props) {
 
   useEffect(() => {
     if (!filters.empresaId) return
+    let cancelled = false
     setLoading(true)
     setError(null)
-    leadsApi
-      .list(filters.empresaId)
-      .then(setLeads)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Erro ao carregar leads'))
-      .finally(() => setLoading(false))
+    ;(async () => {
+      try {
+        const acc: LeadSummaryDto[] = []
+        let page = 0
+        while (true) {
+          const resp = await leadsApi.list(filters.empresaId, { page, pageSize: 500 })
+          if (cancelled) return
+          acc.push(...resp.items)
+          if (acc.length >= resp.total || resp.items.length === 0) break
+          page++
+        }
+        if (!cancelled) setLeads(acc)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Erro ao carregar leads')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [filters.empresaId])
 
   const optionsOrigem = useMemo(() => uniq(leads.map((l) => l.origem)), [leads])

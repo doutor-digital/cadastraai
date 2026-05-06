@@ -390,10 +390,30 @@ export interface BulkCreateLeadsResponse {
   failed: BulkLeadErrorDto[]
 }
 
+export interface PaginatedLeads {
+  items: LeadSummaryDto[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface ListLeadsParams {
+  page?: number
+  pageSize?: number
+  search?: string
+  status?: 'todos' | 'agendados' | 'nao_agendados'
+}
+
 // ----- Leads -----
 export const leadsApi = {
-  list: (empresaId: string) =>
-    api.get<LeadSummaryDto[]>(`/api/empresas/${empresaId}/leads`),
+  list: (empresaId: string, params: ListLeadsParams = {}) => {
+    const q: Record<string, string> = {}
+    if (params.page !== undefined) q.page = String(params.page)
+    if (params.pageSize !== undefined) q.pageSize = String(params.pageSize)
+    if (params.search) q.search = params.search
+    if (params.status && params.status !== 'todos') q.status = params.status
+    return api.get<PaginatedLeads>(`/api/empresas/${empresaId}/leads`, q)
+  },
   get: (leadId: string) => api.get<LeadDetailDto>(`/api/leads/${leadId}`),
   create: (empresaId: string, data: CreateLeadPayload) =>
     api.post<LeadDetailDto>(`/api/empresas/${empresaId}/leads`, data),

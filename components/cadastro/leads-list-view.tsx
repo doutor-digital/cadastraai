@@ -1,14 +1,15 @@
 'use client'
 
-import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users } from 'lucide-react'
-import { deleteLead } from '@/lib/cadastro-store'
-import { useMergedLeads } from '@/lib/leads-merged'
+import { deleteLead, useCadastroStore } from '@/lib/cadastro-store'
+import { empresasApi, leadsApi, type EmpresaDto, type LeadSummaryDto } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
 
 const PAGE_SIZE = 100
+const DEBOUNCE_MS = 300
 
 interface LeadsListViewProps {
   onBack: () => void
@@ -34,55 +35,116 @@ function formatDate(iso: string): string {
   return dateFormatter.format(d)
 }
 
-interface IndexedLead {
-  lead: Lead
-  search: string
+function summaryToLead(s: LeadSummaryDto): Lead {
+  return {
+    id: s.id,
+    empresaId: s.empresaId,
+    nome: s.nome,
+    telefone: s.telefone,
+    origem: s.origem,
+    tipo: (s.tipo as Lead['tipo']) ?? 'Cadastro',
+    tipoResgate: s.tipoResgate ?? undefined,
+    interacao: s.interacao,
+    agendouConsulta: s.agendouConsulta,
+    pagamentoAntecipado: s.pagamentoAntecipado,
+    dataAgendamento: s.dataAgendamento ?? undefined,
+    motivoNaoAgendamento: s.motivoNaoAgendamento ?? undefined,
+    nomeResponsavel: s.nomeResponsavel,
+    createdAt: s.createdAt,
+  }
 }
 
 export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsListViewProps) {
-  const { leads, loading, error } = useMergedLeads()
+  const localStore = useCadastroStore()
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState<string>('')
   const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'todos' | 'agendados' | 'nao_agendados'>('todos')
   const [page, setPage] = useState(0)
+  const [pageData, setPageData] = useState<LeadSummaryDto[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Índice de busca pré-computado: junta os campos pesquisáveis em um único string lowercase.
-  const indexed = useMemo<IndexedLead[]>(
-    () =>
-      leads.map((l) => ({
-        lead: l,
-        search: `${l.nome} ${l.telefone} ${l.origem} ${l.nomeResponsavel}`.toLowerCase(),
-      })),
-    [leads],
-  )
+  // Debounce do search
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query.trim()), DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [query])
 
-  const filtered = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase()
-    const out: Lead[] = []
-    for (const i of indexed) {
-      if (statusFilter === 'agendados' && !i.lead.agendouConsulta) continue
-      if (statusFilter === 'nao_agendados' && i.lead.agendouConsulta) continue
-      if (q && !i.search.includes(q)) continue
-      out.push(i.lead)
-    }
-    return out
-  }, [indexed, deferredQuery, statusFilter])
-
-  // Reset page sempre que filtros mudarem.
+  // Reset de página quando muda filtros
   useEffect(() => {
     setPage(0)
-  }, [deferredQuery, statusFilter])
+  }, [debouncedQuery, statusFilter, empresaId])
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const safePage = Math.min(page, totalPages - 1)
+  // Busca empresas
+  useEffect(() => {
+    let cancelled = false
+    empresasApi
+      .list()
+      .then((list) => {
+        if (cancelled) return
+        setEmpresas(list)
+        if (list.length > 0) setEmpresaId((cur) => cur || list[0].id)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Erro ao carregar empresas')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Busca a página atual (cancelando requests obsoletas)
+  const reqIdRef = useRef(0)
+  useEffect(() => {
+    if (!empresaId) return
+    const myReqId = ++reqIdRef.current
+    setLoading(true)
+    setError(null)
+    leadsApi
+      .list(empresaId, {
+        page,
+        pageSize: PAGE_SIZE,
+        search: debouncedQuery || undefined,
+        status: statusFilter,
+      })
+      .then((resp) => {
+        if (myReqId !== reqIdRef.current) return
+        setPageData(resp.items)
+        setTotal(resp.total)
+      })
+      .catch((err) => {
+        if (myReqId !== reqIdRef.current) return
+        setError(err instanceof Error ? err.message : 'Erro ao carregar leads')
+        setPageData([])
+        setTotal(0)
+      })
+      .finally(() => {
+        if (myReqId === reqIdRef.current) setLoading(false)
+      })
+  }, [empresaId, page, debouncedQuery, statusFilter])
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const safePage = Math.min(page, Math.max(0, totalPages - 1))
   const pageStart = safePage * PAGE_SIZE
-  const pageEnd = Math.min(pageStart + PAGE_SIZE, filtered.length)
-  const pageRows = useMemo(() => filtered.slice(pageStart, pageEnd), [filtered, pageStart, pageEnd])
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, total)
+
+  // Combinar com leads do localStorage (apenas na primeira página, sem filtros)
+  // pra que cadastros manuais antigos ainda apareçam.
+  const showLocal = page === 0 && !debouncedQuery && statusFilter === 'todos'
+  const localLeads: Lead[] = showLocal ? localStore.leads : []
+  const apiLeads: Lead[] = pageData.map(summaryToLead)
+  const pageRows: Lead[] = showLocal ? [...localLeads, ...apiLeads] : apiLeads
 
   const handleDelete = (lead: Lead) => {
     if (!confirm(`Apagar o lead "${lead.nome}"? Esta ação não pode ser desfeita.`)) return
     deleteLead(lead.id)
   }
+
+  const totalDisplay = total + (showLocal ? localLeads.length : 0)
 
   return (
     <motion.div
@@ -112,11 +174,11 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
           <div className="flex-1">
             <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Cadastros</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-none">
-              Leads ({loading ? '…' : leads.length})
+              Leads ({loading && total === 0 ? '…' : totalDisplay})
             </h1>
             <p className="text-[13px] text-cyan-100/85 mt-2">
               {error
-                ? `Mostrando apenas dados locais — ${error}`
+                ? `Falha ao consultar o servidor — ${error}`
                 : 'Gerencie, edite e remova os leads cadastrados.'}
             </p>
           </div>
@@ -132,6 +194,18 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
 
       {/* Filters */}
       <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-4 flex flex-wrap items-center gap-3 mb-4">
+        {empresas.length > 1 && (
+          <select
+            value={empresaId}
+            onChange={(e) => setEmpresaId(e.target.value)}
+            style={{ colorScheme: 'dark' }}
+            className="h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-sm focus:outline-none focus:border-cyan-400/55"
+          >
+            {empresas.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
+        )}
         <div className="relative flex-1 min-w-[240px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
           <input
@@ -140,6 +214,9 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
             placeholder="Buscar por nome, telefone, origem, responsável…"
             className="w-full h-10 pl-10 pr-3 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-sm placeholder:text-white/35 focus:outline-none focus:border-cyan-400/55"
           />
+          {loading && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-white/45">…</span>
+          )}
         </div>
         <div className="inline-flex items-center rounded-xl border border-white/[0.05] bg-[#0c0d10] p-0.5">
           {[
@@ -163,15 +240,17 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
 
       {/* Table */}
       <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] overflow-hidden">
-        {filtered.length === 0 ? (
+        {pageRows.length === 0 ? (
           <div className="px-6 py-16 text-center">
-            <p className="text-base text-white/85 font-medium mb-1">Nenhum lead encontrado</p>
+            <p className="text-base text-white/85 font-medium mb-1">
+              {loading ? 'Carregando leads…' : 'Nenhum lead encontrado'}
+            </p>
             <p className="text-sm text-white/55">
-              {leads.length === 0
-                ? loading
-                  ? 'Carregando leads…'
-                  : 'Cadastre seu primeiro lead clicando em "Novo Lead" acima.'
-                : 'Ajuste a busca ou os filtros para encontrar o que você procura.'}
+              {loading
+                ? 'Aguarde um instante.'
+                : totalDisplay === 0
+                  ? 'Cadastre seu primeiro lead clicando em "Novo Lead" acima.'
+                  : 'Ajuste a busca ou os filtros para encontrar o que você procura.'}
             </p>
           </div>
         ) : (
@@ -205,11 +284,11 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
         )}
       </div>
 
-      {filtered.length > PAGE_SIZE && (
+      {total > 0 && (
         <div className="mt-4 flex items-center justify-between gap-3 px-1">
           <p className="text-[12px] text-white/55 tabular-nums">
-            Mostrando {pageStart + 1}–{pageEnd} de {filtered.length}
-            {filtered.length !== leads.length && ` (filtrados de ${leads.length})`}
+            Mostrando {pageStart + 1}–{pageEnd} de {total}
+            {showLocal && localLeads.length > 0 && ` + ${localLeads.length} local`}
           </p>
           <div className="flex items-center gap-2">
             <button

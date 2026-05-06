@@ -31,6 +31,7 @@ export type DashboardView =
   | 'empresa'
   | 'importar'
   | 'importados'
+  | 'relatorios'
   | 'config'
 
 interface SidebarItem {
@@ -211,6 +212,17 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
                     <path d="M3 6h18" />
                     <path d="M7 12h10" />
                     <path d="M10 18h4" />
+                  </svg>
+                ),
+              },
+            )}
+            {renderItem(
+              { id: 'relatorios', label: 'Relatórios', iconUrl: '' },
+              {
+                iconNode: (
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 3v18h18" />
+                    <path d="M7 14l4-4 4 4 5-7" />
                   </svg>
                 ),
               },

@@ -48,7 +48,21 @@ export function useMergedLeads(): MergedLeadsResult {
     ;(async () => {
       try {
         const empresas = await empresasApi.list()
-        const lists = await Promise.all(empresas.map((e) => leadsApi.list(e.id)))
+        // Pega todos paginados — pageSize máximo (500) por chamada.
+        // Esse hook é usado por views agregadas (dashboard, importados); aceita carregar tudo.
+        const lists = await Promise.all(
+          empresas.map(async (e) => {
+            const acc: ApiLeadSummary[] = []
+            let page = 0
+            while (true) {
+              const resp = await leadsApi.list(e.id, { page, pageSize: 500 })
+              acc.push(...resp.items)
+              if (acc.length >= resp.total || resp.items.length === 0) break
+              page++
+            }
+            return acc
+          }),
+        )
         if (cancelled) return
         const merged: ApiLeadSummary[] = []
         for (const list of lists) merged.push(...list)

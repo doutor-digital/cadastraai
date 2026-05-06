@@ -14,6 +14,7 @@ import { RecebimentosList } from '@/components/cadastro/recebimentos-list'
 import { EmpresaView } from '@/components/empresa/empresa-view'
 import { ImportView } from '@/components/cadastro/import-view'
 import { ImportadosView } from '@/components/cadastro/importados-view'
+import { RelatoriosView } from '@/components/cadastro/relatorios-view'
 import { ConfigView } from '@/components/cadastro/config-view'
 import { useCadastroStore } from '@/lib/cadastro-store'
 import type { Consulta, Lead, Tratamento } from '@/types'
@@ -29,6 +30,7 @@ const validViews: DashboardView[] = [
   'empresa',
   'importar',
   'importados',
+  'relatorios',
   'config',
 ]
 
@@ -232,6 +234,7 @@ export function DashboardContent() {
             {view === 'empresa' && <EmpresaView onBack={goDashboard} />}
             {view === 'importar' && <ImportView onBack={goDashboard} />}
             {view === 'importados' && <ImportadosView onBack={goDashboard} />}
+            {view === 'relatorios' && <RelatoriosView onBack={goDashboard} />}
             {view === 'config' && <ConfigView onBack={goDashboard} />}
           </motion.div>
         </AnimatePresence>
