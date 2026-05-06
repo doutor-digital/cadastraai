@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { DashboardHeader } from '@/components/dashboard/header'
 import { useCadastroStore, useIsClient } from '@/lib/cadastro-store'
-import { useMergedLeads } from '@/lib/leads-merged'
+import { empresasApi, leadsApi, type EmpresaDto, type LeadsStatsResponse } from '@/lib/api'
 import { AnimatedNumber } from '@/components/ui/animated-number'
 import { cn } from '@/lib/utils'
-import type { DashboardFilters, Lead, Consulta, Tratamento } from '@/types'
+import type { DashboardFilters, Consulta, Tratamento } from '@/types'
 
 const dayMs = 24 * 60 * 60 * 1000
 
@@ -71,30 +71,74 @@ interface Computed {
   planos: { nome: string; count: number; valor: number; pct: number }[]
 }
 
-function compute(
-  leads: Lead[],
+interface ApiAggregated {
+  leads: number
+  prevLeads: number
+  agendados: number
+  consultas: number
+  prevConsultas: number
+  comparecidas: number
+  prevComparecidas: number
+  tratamentos: number
+  prevTratamentos: number
+  origens: { nome: string; count: number; pct: number }[]
+  responsaveis: { nome: string; leads: number; fechados: number; receita: number }[]
+}
+
+function emptyApiAggregated(): ApiAggregated {
+  return {
+    leads: 0, prevLeads: 0, agendados: 0,
+    consultas: 0, prevConsultas: 0,
+    comparecidas: 0, prevComparecidas: 0,
+    tratamentos: 0, prevTratamentos: 0,
+    origens: [], responsaveis: [],
+  }
+}
+
+function aggregateStats(stats: LeadsStatsResponse[]): ApiAggregated {
+  const out = emptyApiAggregated()
+  const origensMap = new Map<string, number>()
+  const responsaveisMap = new Map<string, { leads: number; fechados: number }>()
+  for (const s of stats) {
+    out.leads += s.current.leads
+    out.agendados += s.current.agendados
+    out.consultas += s.current.comConsulta
+    out.comparecidas += s.current.compareceram
+    out.tratamentos += s.current.fecharam
+    if (s.previous) {
+      out.prevLeads += s.previous.leads
+      out.prevConsultas += s.previous.comConsulta
+      out.prevComparecidas += s.previous.compareceram
+      out.prevTratamentos += s.previous.fecharam
+    }
+    for (const o of s.topOrigens) origensMap.set(o.nome, (origensMap.get(o.nome) ?? 0) + o.count)
+    for (const r of s.topResponsaveis) {
+      const cur = responsaveisMap.get(r.nome) ?? { leads: 0, fechados: 0 }
+      cur.leads += r.leads
+      cur.fechados += r.fecharam
+      responsaveisMap.set(r.nome, cur)
+    }
+  }
+  const origemTotal = out.leads || 1
+  out.origens = [...origensMap.entries()]
+    .map(([nome, count]) => ({ nome, count, pct: Math.round((count / origemTotal) * 100) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4)
+  out.responsaveis = [...responsaveisMap.entries()]
+    .map(([nome, v]) => ({ nome, leads: v.leads, fechados: v.fechados, receita: 0 }))
+    .sort((a, b) => b.fechados - a.fechados || b.leads - a.leads)
+  return out
+}
+
+function computeLocal(
   consultas: Consulta[],
   tratamentos: Tratamento[],
-  apiCompareceuFlags: { compareceu: boolean | null | undefined; createdAt: string }[],
   win: ReturnType<typeof periodWindow>,
-): Computed {
-  const leadsCurr = leads.filter((l) => inWindow(l.createdAt, win.startMs))
-  const leadsPrev = leads.filter((l) => inWindow(l.createdAt, win.prevStartMs, win.prevEndMs))
+): Pick<Computed, 'consultas' | 'prevConsultas' | 'tratamentos' | 'prevTratamentos' | 'comparecidas' | 'prevComparecidas' | 'receita' | 'prevReceita' | 'ticketMedio' | 'formas' | 'planos'> {
   const consultasCurr = consultas.filter((c) => inWindow(c.createdAt, win.startMs))
   const consultasPrev = consultas.filter((c) => inWindow(c.createdAt, win.prevStartMs, win.prevEndMs))
   const tratamentosCurr = tratamentos.filter((t) => inWindow(t.createdAt, win.startMs))
   const tratamentosPrev = tratamentos.filter((t) => inWindow(t.createdAt, win.prevStartMs, win.prevEndMs))
-
-  // Comparecidas = consultas locais que compareceram + leads do servidor
-  // que já têm consulta marcada como compareceu.
-  const comparecidasCurr =
-    consultasCurr.filter((c) => c.compareceu).length +
-    apiCompareceuFlags.filter((f) => f.compareceu === true && inWindow(f.createdAt, win.startMs)).length
-  const comparecidasPrev =
-    consultasPrev.filter((c) => c.compareceu).length +
-    apiCompareceuFlags.filter(
-      (f) => f.compareceu === true && inWindow(f.createdAt, win.prevStartMs, win.prevEndMs),
-    ).length
 
   const sumRecs = (list: Array<{ recebimentos: { valorRecebimento: number }[] }>) =>
     list.reduce((s, item) => s + item.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0)
@@ -102,31 +146,6 @@ function compute(
   const receitaCurr = sumRecs(consultasCurr) + sumRecs(tratamentosCurr)
   const receitaPrev = sumRecs(consultasPrev) + sumRecs(tratamentosPrev)
   const ticketMedio = tratamentosCurr.length > 0 ? receitaCurr / tratamentosCurr.length : 0
-
-  const origemMap = new Map<string, number>()
-  for (const l of leadsCurr) {
-    const k = (l.origem || 'Não informado').trim() || 'Não informado'
-    origemMap.set(k, (origemMap.get(k) ?? 0) + 1)
-  }
-  const origemTotal = leadsCurr.length || 1
-  const origens = [...origemMap.entries()]
-    .map(([nome, count]) => ({ nome, count, pct: Math.round((count / origemTotal) * 100) }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 4)
-
-  const responsavelSet = new Set<string>()
-  for (const l of leads) if (l.nomeResponsavel) responsavelSet.add(l.nomeResponsavel)
-  const responsaveis = [...responsavelSet]
-    .map((nome) => {
-      const ls = leadsCurr.filter((l) => l.nomeResponsavel === nome)
-      const cs = consultasCurr.filter((c) => ls.some((l) => l.id === c.leadId))
-      const ts = tratamentosCurr.filter((t) => cs.some((c) => c.id === t.consultaId))
-      const receita =
-        cs.reduce((s, c) => s + c.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0) +
-        ts.reduce((s, t) => s + t.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0)
-      return { nome, leads: ls.length, fechados: ts.length, receita }
-    })
-    .sort((a, b) => b.fechados - a.fechados || b.receita - a.receita)
 
   const formaMap = new Map<string, number>()
   const allRecs = [...consultasCurr.flatMap((c) => c.recebimentos), ...tratamentosCurr.flatMap((t) => t.recebimentos)]
@@ -152,20 +171,15 @@ function compute(
     .slice(0, 4)
 
   return {
-    leads: leadsCurr.length,
-    prevLeads: leadsPrev.length,
-    agendados: leadsCurr.filter((l) => l.agendouConsulta).length,
     consultas: consultasCurr.length,
     prevConsultas: consultasPrev.length,
-    comparecidas: comparecidasCurr,
-    prevComparecidas: comparecidasPrev,
+    comparecidas: consultasCurr.filter((c) => c.compareceu).length,
+    prevComparecidas: consultasPrev.filter((c) => c.compareceu).length,
     tratamentos: tratamentosCurr.length,
     prevTratamentos: tratamentosPrev.length,
     receita: receitaCurr,
     prevReceita: receitaPrev,
     ticketMedio,
-    origens,
-    responsaveis,
     formas,
     planos,
   }
@@ -176,14 +190,51 @@ export function DashboardView() {
   const [tickNow, setTickNow] = useState(() => Date.now())
   const store = useCadastroStore()
   const isClient = useIsClient()
-  const { leads: mergedLeads, apiSummaries } = useMergedLeads()
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [apiAgg, setApiAgg] = useState<ApiAggregated>(emptyApiAggregated())
+  const [statsLoading, setStatsLoading] = useState(false)
+  const reqIdRef = useRef(0)
 
   useEffect(() => {
-    const id = setInterval(() => setTickNow(Date.now()), 6000)
+    const id = setInterval(() => setTickNow(Date.now()), 60_000)
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    empresasApi
+      .list()
+      .then(setEmpresas)
+      .catch(() => setEmpresas([]))
+  }, [])
+
   const win = useMemo(() => periodWindow(filters.periodo), [filters.periodo, tickNow])
+
+  // Busca stats agregadas em paralelo pra todas as empresas — uma query agregada SQL por empresa.
+  useEffect(() => {
+    if (!isClient || empresas.length === 0) return
+    const myReqId = ++reqIdRef.current
+    setStatsLoading(true)
+    const fromIso = new Date(win.startMs).toISOString()
+    const toIso = new Date().toISOString()
+    const prevFromIso = new Date(win.prevStartMs).toISOString()
+    const prevToIso = new Date(win.prevEndMs).toISOString()
+    Promise.all(
+      empresas.map((e) =>
+        leadsApi.stats(e.id, { from: fromIso, to: toIso, prevFrom: prevFromIso, prevTo: prevToIso }),
+      ),
+    )
+      .then((results) => {
+        if (myReqId !== reqIdRef.current) return
+        setApiAgg(aggregateStats(results))
+      })
+      .catch(() => {
+        if (myReqId !== reqIdRef.current) return
+        setApiAgg(emptyApiAggregated())
+      })
+      .finally(() => {
+        if (myReqId === reqIdRef.current) setStatsLoading(false)
+      })
+  }, [empresas, win, isClient])
 
   const m = useMemo<Computed>(() => {
     if (!isClient) {
@@ -199,9 +250,26 @@ export function DashboardView() {
         planos: [],
       }
     }
-    const apiFlags = apiSummaries.map((s) => ({ compareceu: s.compareceu, createdAt: s.createdAt }))
-    return compute(mergedLeads, store.consultas, store.tratamentos, apiFlags, win)
-  }, [mergedLeads, apiSummaries, store, win, isClient])
+    const local = computeLocal(store.consultas, store.tratamentos, win)
+    return {
+      leads: apiAgg.leads,
+      prevLeads: apiAgg.prevLeads,
+      agendados: apiAgg.agendados,
+      consultas: apiAgg.consultas + local.consultas,
+      prevConsultas: apiAgg.prevConsultas + local.prevConsultas,
+      comparecidas: apiAgg.comparecidas + local.comparecidas,
+      prevComparecidas: apiAgg.prevComparecidas + local.prevComparecidas,
+      tratamentos: apiAgg.tratamentos + local.tratamentos,
+      prevTratamentos: apiAgg.prevTratamentos + local.prevTratamentos,
+      receita: local.receita,
+      prevReceita: local.prevReceita,
+      ticketMedio: local.ticketMedio,
+      origens: apiAgg.origens,
+      responsaveis: apiAgg.responsaveis,
+      formas: local.formas,
+      planos: local.planos,
+    }
+  }, [apiAgg, store, win, isClient])
 
   const dReceita = deltaPct(m.receita, m.prevReceita)
   const dLeads = deltaPct(m.leads, m.prevLeads)

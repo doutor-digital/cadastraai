@@ -404,6 +404,42 @@ export interface ListLeadsParams {
   status?: 'todos' | 'agendados' | 'nao_agendados'
 }
 
+export interface LeadsStatsPeriod {
+  leads: number
+  agendados: number
+  comConsulta: number
+  compareceram: number
+  fecharam: number
+  cadastros: number
+  resgates: number
+}
+
+export interface OrigemBucket {
+  nome: string
+  count: number
+}
+
+export interface ResponsavelBucket {
+  nome: string
+  leads: number
+  compareceram: number
+  fecharam: number
+}
+
+export interface LeadsStatsResponse {
+  current: LeadsStatsPeriod
+  previous: LeadsStatsPeriod | null
+  topOrigens: OrigemBucket[]
+  topResponsaveis: ResponsavelBucket[]
+}
+
+export interface StatsParams {
+  from?: string
+  to?: string
+  prevFrom?: string
+  prevTo?: string
+}
+
 // ----- Leads -----
 export const leadsApi = {
   list: (empresaId: string, params: ListLeadsParams = {}) => {
@@ -413,6 +449,14 @@ export const leadsApi = {
     if (params.search) q.search = params.search
     if (params.status && params.status !== 'todos') q.status = params.status
     return api.get<PaginatedLeads>(`/api/empresas/${empresaId}/leads`, q)
+  },
+  stats: (empresaId: string, params: StatsParams) => {
+    const q: Record<string, string> = {}
+    if (params.from) q.from = params.from
+    if (params.to) q.to = params.to
+    if (params.prevFrom) q.prevFrom = params.prevFrom
+    if (params.prevTo) q.prevTo = params.prevTo
+    return api.get<LeadsStatsResponse>(`/api/empresas/${empresaId}/leads/stats`, q)
   },
   get: (leadId: string) => api.get<LeadDetailDto>(`/api/leads/${leadId}`),
   create: (empresaId: string, data: CreateLeadPayload) =>
