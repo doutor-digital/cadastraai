@@ -376,6 +376,19 @@ export interface CreateRecebimentoPayload {
   dataRecebimento: string
 }
 
+export interface BulkLeadErrorDto {
+  index: number
+  error: string
+}
+
+export interface BulkCreateLeadsResponse {
+  totalReceived: number
+  createdCount: number
+  failedCount: number
+  created: LeadDetailDto[]
+  failed: BulkLeadErrorDto[]
+}
+
 // ----- Leads -----
 export const leadsApi = {
   list: (empresaId: string) =>
@@ -383,6 +396,8 @@ export const leadsApi = {
   get: (leadId: string) => api.get<LeadDetailDto>(`/api/leads/${leadId}`),
   create: (empresaId: string, data: CreateLeadPayload) =>
     api.post<LeadDetailDto>(`/api/empresas/${empresaId}/leads`, data),
+  bulkCreate: (empresaId: string, leads: CreateLeadPayload[]) =>
+    api.post<BulkCreateLeadsResponse>(`/api/empresas/${empresaId}/leads/bulk`, { leads }),
   update: (leadId: string, data: UpdateLeadPayload) =>
     api.patch<LeadDetailDto>(`/api/leads/${leadId}`, data),
   delete: (leadId: string) => api.delete<void>(`/api/leads/${leadId}`),

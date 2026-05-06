@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 interface AvatarCircleProps {
@@ -19,9 +19,11 @@ export function AvatarCircle({
   className,
 }: AvatarCircleProps) {
   const [errored, setErrored] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const initial = (name || email || 'U').trim().slice(0, 1).toUpperCase()
   const dimension = `${size}px`
-  const showImage = src && !errored
+  const showImage = mounted && src && !errored
 
   return (
     <span

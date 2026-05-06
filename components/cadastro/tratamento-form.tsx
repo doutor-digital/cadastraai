@@ -59,13 +59,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
   const planoOptions = config.planosTratamento.map((p) => ({ value: p, label: p }))
   const usedConsultaIds = useMemo(() => new Set(store.tratamentos.map((t) => t.consultaId)), [store.tratamentos])
 
-  const elegiveis = useMemo(
-    () =>
-      store.consultas.filter(
-        (c) => !usedConsultaIds.has(c.id) || c.id === editing?.consultaId,
-      ),
-    [store.consultas, usedConsultaIds, editing],
-  )
+  const elegiveis = useMemo(() => store.consultas, [store.consultas])
 
   const [data, setData] = useState<FormState>(() =>
     editing
@@ -153,9 +147,12 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
 
   const consultaOptions = elegiveis.map((c) => {
     const lead = store.leads.find((l) => l.id === c.leadId)
+    const jaTemTratamento = usedConsultaIds.has(c.id) && c.id !== editing?.consultaId
+    const base = `${lead?.nome ?? 'Lead'} — orçamento R$ ${c.orcamento.toLocaleString('pt-BR')}`
     return {
       value: c.id,
-      label: `${lead?.nome ?? 'Lead'} — orçamento R$ ${c.orcamento.toLocaleString('pt-BR')}`,
+      label: jaTemTratamento ? `${base} · já tem tratamento` : base,
+      disabled: jaTemTratamento,
     }
   })
 
@@ -223,7 +220,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
             options={consultaOptions}
             placeholder="Selecione uma consulta…"
             required
-            hint="Aparecem aqui as consultas que ainda não têm tratamento vinculado."
+            hint="Todas as consultas aparecem; as marcadas como 'já tem tratamento' ficam desabilitadas."
           />
         )}
 

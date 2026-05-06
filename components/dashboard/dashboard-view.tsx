@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import { DashboardHeader } from '@/components/dashboard/header'
 import { useCadastroStore, useIsClient } from '@/lib/cadastro-store'
 import { AnimatedNumber } from '@/components/ui/animated-number'
+import { cn } from '@/lib/utils'
 import type { DashboardFilters, Lead, Consulta, Tratamento } from '@/types'
 
 const dayMs = 24 * 60 * 60 * 1000
@@ -62,8 +63,9 @@ interface Computed {
   prevReceita: number
   ticketMedio: number
   origens: { nome: string; count: number; pct: number }[]
-  responsaveis: { nome: string; leads: number; fechados: number }[]
+  responsaveis: { nome: string; leads: number; fechados: number; receita: number }[]
   formas: { forma: string; valor: number; pct: number }[]
+  planos: { nome: string; count: number; valor: number; pct: number }[]
 }
 
 function compute(
@@ -97,13 +99,19 @@ function compute(
     .sort((a, b) => b.count - a.count)
     .slice(0, 4)
 
-  const responsavelNames = ['Rayssa', 'Maria Eduarda', 'Adriele'] as const
-  const responsaveis = responsavelNames.map((nome) => {
-    const ls = leadsCurr.filter((l) => l.nomeResponsavel === nome)
-    const cs = consultasCurr.filter((c) => ls.some((l) => l.id === c.leadId))
-    const ts = tratamentosCurr.filter((t) => cs.some((c) => c.id === t.consultaId))
-    return { nome, leads: ls.length, fechados: ts.length }
-  })
+  const responsavelSet = new Set<string>()
+  for (const l of leads) if (l.nomeResponsavel) responsavelSet.add(l.nomeResponsavel)
+  const responsaveis = [...responsavelSet]
+    .map((nome) => {
+      const ls = leadsCurr.filter((l) => l.nomeResponsavel === nome)
+      const cs = consultasCurr.filter((c) => ls.some((l) => l.id === c.leadId))
+      const ts = tratamentosCurr.filter((t) => cs.some((c) => c.id === t.consultaId))
+      const receita =
+        cs.reduce((s, c) => s + c.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0) +
+        ts.reduce((s, t) => s + t.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0)
+      return { nome, leads: ls.length, fechados: ts.length, receita }
+    })
+    .sort((a, b) => b.fechados - a.fechados || b.receita - a.receita)
 
   const formaMap = new Map<string, number>()
   const allRecs = [...consultasCurr.flatMap((c) => c.recebimentos), ...tratamentosCurr.flatMap((t) => t.recebimentos)]
@@ -111,10 +119,22 @@ function compute(
     formaMap.set(r.formaPagamento, (formaMap.get(r.formaPagamento) ?? 0) + r.valorRecebimento)
   }
   const formaTotal = receitaCurr || 1
-  const formas = (['Pix', 'Cartão', 'Dinheiro', 'Boleto'] as const).map((forma) => {
-    const valor = formaMap.get(forma) ?? 0
-    return { forma, valor, pct: Math.round((valor / formaTotal) * 100) }
-  })
+  const formas = [...formaMap.entries()]
+    .map(([forma, valor]) => ({ forma, valor, pct: Math.round((valor / formaTotal) * 100) }))
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, 4)
+
+  const planoMap = new Map<string, { count: number; valor: number }>()
+  for (const t of tratamentosCurr) {
+    const k = (t.planoTratamento || 'Não informado').trim() || 'Não informado'
+    const cur = planoMap.get(k) ?? { count: 0, valor: 0 }
+    planoMap.set(k, { count: cur.count + 1, valor: cur.valor + t.valorPlano })
+  }
+  const planoCountTotal = tratamentosCurr.length || 1
+  const planos = [...planoMap.entries()]
+    .map(([nome, v]) => ({ nome, count: v.count, valor: v.valor, pct: Math.round((v.count / planoCountTotal) * 100) }))
+    .sort((a, b) => b.count - a.count || b.valor - a.valor)
+    .slice(0, 4)
 
   return {
     leads: leadsCurr.length,
@@ -130,6 +150,7 @@ function compute(
     origens,
     responsaveis,
     formas,
+    planos,
   }
 }
 
@@ -153,17 +174,10 @@ export function DashboardView() {
         consultas: 0, prevConsultas: 0,
         tratamentos: 0, prevTratamentos: 0,
         receita: 0, prevReceita: 0, ticketMedio: 0,
-        origens: [], responsaveis: [
-          { nome: 'Rayssa', leads: 0, fechados: 0 },
-          { nome: 'Maria Eduarda', leads: 0, fechados: 0 },
-          { nome: 'Adriele', leads: 0, fechados: 0 },
-        ],
-        formas: [
-          { forma: 'Pix', valor: 0, pct: 0 },
-          { forma: 'Cartão', valor: 0, pct: 0 },
-          { forma: 'Dinheiro', valor: 0, pct: 0 },
-          { forma: 'Boleto', valor: 0, pct: 0 },
-        ],
+        origens: [],
+        responsaveis: [],
+        formas: [],
+        planos: [],
       }
     }
     return compute(store.leads, store.consultas, store.tratamentos, win)
@@ -179,10 +193,9 @@ export function DashboardView() {
     <div className="min-h-full">
       <DashboardHeader filters={filters} onFilterChange={(next) => setFilters((p) => ({ ...p, ...next }))} />
 
-      <main className="px-8 py-8 max-w-[1280px] mx-auto">
+      <main className="px-4 md:px-8 py-6 md:py-8 max-w-[1280px] mx-auto">
         <motion.div
-          className="grid grid-cols-6 gap-3"
-          style={{ gridAutoRows: '160px' }}
+          className="grid grid-cols-1 md:grid-cols-6 gap-3 [grid-auto-rows:auto] md:[grid-auto-rows:160px]"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
@@ -268,27 +281,9 @@ export function DashboardView() {
             </div>
           </div>
 
-          {/* Top origens (col 5–6, row 1–2) */}
-          <div className="col-span-2 row-span-2 rounded-3xl bg-[#15171b] border border-white/[0.05] p-6">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50 mb-5">Top origens</p>
-            {m.origens.length === 0 ? (
-              <p className="text-[12px] text-white/45">Sem leads cadastrados ainda.</p>
-            ) : (
-              <div className="space-y-4">
-                {m.origens.map((o) => (
-                  <div key={o.nome}>
-                    <div className="flex items-baseline justify-between mb-1.5">
-                      <span className="text-[14px] font-medium">{o.nome}</span>
-                      <span className="text-[12px] text-white/45 tabular-nums">{o.count}</span>
-                    </div>
-                    <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                      <div className="h-full bg-cyan-400" style={{ width: `${o.pct}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Top origens / Planos / Formas (col 5–6, row 1–2) */}
+          <TopBreakdownCard origens={m.origens} planos={m.planos} formas={m.formas} />
+
 
           {/* Ticket */}
           <div className="col-span-1 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-5 flex flex-col justify-between">
@@ -301,29 +296,46 @@ export function DashboardView() {
             </div>
           </div>
 
-          {/* Equipe */}
+          {/* Top atendentes */}
           <div className="col-span-3 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-5">
             <div className="flex items-baseline justify-between mb-3">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Equipe</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Top atendentes</p>
               <p className="text-[11px] text-white/45">{m.responsaveis.length} responsáveis</p>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              {m.responsaveis.map((r, i) => {
-                const accents = ['bg-cyan-400', 'bg-sky-400', 'bg-blue-400']
-                return (
-                  <div key={r.nome} className="rounded-xl bg-white/[0.03] border border-white/[0.05] p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`h-2 w-2 rounded-full ${accents[i]}`} />
-                      <span className="text-[12px] font-medium">{r.nome}</span>
+            {m.responsaveis.length === 0 ? (
+              <p className="text-[12px] text-white/45">Cadastre leads com responsáveis para aparecer aqui.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-3">
+                {m.responsaveis.slice(0, 3).map((r, i) => {
+                  const medalEmoji = ['🥇', '🥈', '🥉'][i] ?? '·'
+                  const conv = r.leads > 0 ? Math.round((r.fechados / r.leads) * 100) : 0
+                  return (
+                    <div
+                      key={r.nome}
+                      className={cn(
+                        'rounded-xl border p-3',
+                        i === 0
+                          ? 'bg-cyan-500/[0.08] border-cyan-400/30'
+                          : 'bg-white/[0.03] border-white/[0.05]',
+                      )}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-[14px]">{medalEmoji}</span>
+                        <span className="text-[12px] font-medium truncate">{r.nome}</span>
+                      </div>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-[20px] font-bold tabular-nums">{r.fechados}</span>
+                        <span className="text-[11px] text-white/45 tabular-nums">de {r.leads}</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1.5 text-[11px]">
+                        <span className="text-cyan-300 tabular-nums">{conv}% conv.</span>
+                        <span className="text-white/55 tabular-nums">{brl(r.receita)}</span>
+                      </div>
                     </div>
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[20px] font-bold tabular-nums">{r.fechados}</span>
-                      <span className="text-[11px] text-white/45 tabular-nums">de {r.leads}</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -342,4 +354,82 @@ export function DashboardView() {
       </main>
     </div>
   )
+}
+
+interface TopBreakdownCardProps {
+  origens: { nome: string; count: number; pct: number }[]
+  planos: { nome: string; count: number; valor: number; pct: number }[]
+  formas: { forma: string; valor: number; pct: number }[]
+}
+
+function TopBreakdownCard({ origens, planos, formas }: TopBreakdownCardProps) {
+  const [tab, setTab] = useState<'origens' | 'planos' | 'formas'>('origens')
+
+  const tabs = [
+    { id: 'origens' as const, label: 'Origens' },
+    { id: 'planos' as const, label: 'Planos' },
+    { id: 'formas' as const, label: 'Pagamento' },
+  ]
+
+  const renderRows = () => {
+    if (tab === 'origens') {
+      if (origens.length === 0) return <EmptyHint text="Sem leads cadastrados ainda." />
+      return origens.map((o) => (
+        <BreakdownRow key={o.nome} label={o.nome} primary={String(o.count)} pct={o.pct} />
+      ))
+    }
+    if (tab === 'planos') {
+      if (planos.length === 0) return <EmptyHint text="Sem tratamentos fechados no período." />
+      return planos.map((p) => (
+        <BreakdownRow
+          key={p.nome}
+          label={p.nome}
+          primary={`${p.count}× · ${brl(p.valor)}`}
+          pct={p.pct}
+        />
+      ))
+    }
+    if (formas.length === 0) return <EmptyHint text="Sem recebimentos no período." />
+    return formas.map((f) => (
+      <BreakdownRow key={f.forma} label={f.forma} primary={brl(f.valor)} pct={f.pct} />
+    ))
+  }
+
+  return (
+    <div className="col-span-2 row-span-2 rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 flex flex-col">
+      <div className="flex items-center gap-1 rounded-xl bg-white/[0.03] p-0.5 mb-4">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              'flex-1 h-8 rounded-lg text-[11px] uppercase tracking-wider font-semibold transition-colors',
+              tab === t.id ? 'bg-white text-slate-900' : 'text-white/55 hover:text-white',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="space-y-4 flex-1 overflow-hidden">{renderRows()}</div>
+    </div>
+  )
+}
+
+function BreakdownRow({ label, primary, pct }: { label: string; primary: string; pct: number }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="text-[14px] font-medium truncate">{label}</span>
+        <span className="text-[12px] text-white/55 tabular-nums shrink-0">{primary}</span>
+      </div>
+      <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+        <div className="h-full bg-cyan-400" style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function EmptyHint({ text }: { text: string }) {
+  return <p className="text-[12px] text-white/45">{text}</p>
 }

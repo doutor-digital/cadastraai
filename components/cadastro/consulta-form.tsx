@@ -116,13 +116,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
   )
   const usedLeadIds = useMemo(() => new Set(store.consultas.map((c) => c.leadId)), [store.consultas])
 
-  const availableLeads = useMemo(
-    () =>
-      store.leads.filter(
-        (l) => !usedLeadIds.has(l.id) || l.id === prefilledLeadId || l.id === editing?.leadId,
-      ),
-    [store.leads, usedLeadIds, prefilledLeadId, editing],
-  )
+  const availableLeads = useMemo(() => store.leads, [store.leads])
 
   const [data, setData] = useState<FormState>(() =>
     editing ? fromConsulta(editing) : { ...initialState, leadId: prefilledLeadId ?? '' },
@@ -151,6 +145,10 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
     if (!data.fechouTratamento && !data.motivoNaoFechamento.trim()) {
       setFeedback({ kind: 'error', msg: 'Informe o motivo do não fechamento do tratamento.' })
       return
+    }
+    if (!data.fechouTratamento) {
+      const ok = window.confirm('Ele realmente não fechou tratamento?')
+      if (!ok) return
     }
     if (data.recebimentos.length > 2) {
       setFeedback({ kind: 'error', msg: 'Consulta aceita no máximo 2 recebimentos.' })
@@ -231,13 +229,18 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
             label="Lead"
             value={data.leadId}
             onChange={(e) => set('leadId', e.target.value)}
-            options={availableLeads.map((l) => ({
-              value: l.id,
-              label: `${l.nome} — ${l.telefone}`,
-            }))}
+            options={availableLeads.map((l) => {
+              const jaTem = usedLeadIds.has(l.id) && l.id !== editing?.leadId
+              const base = `${l.nome} — ${l.telefone}`
+              return {
+                value: l.id,
+                label: jaTem ? `${base} · já tem consulta` : base,
+                disabled: jaTem,
+              }
+            })}
             placeholder="Selecione um lead…"
             required
-            hint="Apenas leads ainda sem consulta aparecem aqui."
+            hint="Todos os leads aparecem; os marcados como 'já tem consulta' ficam desabilitados."
           />
         )}
 
@@ -296,7 +299,13 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
             label="Fechou tratamento?"
             description="Aceitou seguir com o tratamento"
             checked={data.fechouTratamento}
-            onChange={(v) => set('fechouTratamento', v)}
+            onChange={(v) => {
+              if (!v && data.fechouTratamento) {
+                const ok = window.confirm('Ele realmente não fechou tratamento?')
+                if (!ok) return
+              }
+              set('fechouTratamento', v)
+            }}
           />
         </div>
 

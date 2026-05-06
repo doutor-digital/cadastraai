@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft,
@@ -12,10 +12,12 @@ import {
   X,
 } from 'lucide-react'
 import { parseCSV, csvToObjects, buildCsv, downloadFile } from '@/lib/csv'
-import { addLead } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
 import { cn } from '@/lib/utils'
+import { empresasApi, leadsApi, type CreateLeadPayload, type EmpresaDto } from '@/lib/api'
 import type { LeadFormData } from '@/types'
+
+const CHUNK_SIZE = 200
 
 interface ImportViewProps {
   onBack: () => void
@@ -30,17 +32,17 @@ interface FieldDef {
 }
 
 const fields: FieldDef[] = [
-  { key: 'nome',                 label: 'Nome',                  required: true,  aliases: ['nome', 'name', 'paciente', 'cliente'] },
+  { key: 'nome',                 label: 'Nome',                  required: true,  aliases: ['nome', 'name', 'paciente', 'cliente', 'nomedocliente', 'nome_do_cliente'] },
   { key: 'telefone',             label: 'Telefone',              required: true,  aliases: ['telefone', 'phone', 'celular', 'whatsapp', 'tel'] },
-  { key: 'origem',               label: 'Origem',                required: true,  aliases: ['origem', 'fonte', 'canal', 'source'] },
+  { key: 'origem',               label: 'Origem',                required: true,  aliases: ['origem', 'fonte', 'canal', 'source', 'origemcadastro', 'origem_cadastro'] },
   { key: 'tipo',                 label: 'Tipo',                  required: false, aliases: ['tipo', 'type'], hint: 'Cadastro ou Resgate. Padrão: Cadastro.' },
-  { key: 'tipoResgate',          label: 'Tipo de Resgate',       required: false, aliases: ['tiporesgate', 'tipo_resgate', 'resgate'] },
+  { key: 'tipoResgate',          label: 'Tipo de Resgate',       required: false, aliases: ['tiporesgate', 'tipo_resgate', 'resgate', 'tipoderesgate', 'tipo_de_resgate'] },
   { key: 'interacao',            label: 'Interação',             required: false, aliases: ['interacao', 'interação', 'interagiu'], hint: 'sim / não' },
-  { key: 'agendouConsulta',      label: 'Agendou consulta',      required: false, aliases: ['agendouconsulta', 'agendou', 'agendou_consulta'], hint: 'sim / não' },
+  { key: 'agendouConsulta',      label: 'Agendou consulta',      required: false, aliases: ['agendouconsulta', 'agendou', 'agendou_consulta', 'clienteagendou', 'cliente_agendou'], hint: 'sim / não' },
   { key: 'pagamentoAntecipado',  label: 'Pagamento antecipado',  required: false, aliases: ['pagamentoantecipado', 'pagamento_antecipado'], hint: 'sim / não' },
-  { key: 'dataAgendamento',      label: 'Data do agendamento',   required: false, aliases: ['dataagendamento', 'data_agendamento', 'data'], hint: 'YYYY-MM-DDTHH:mm ou DD/MM/YYYY' },
-  { key: 'motivoNaoAgendamento', label: 'Motivo não agendamento',required: false, aliases: ['motivonaoagendamento', 'motivo_nao_agendamento', 'motivo'] },
-  { key: 'nomeResponsavel',      label: 'Responsável',           required: true,  aliases: ['nomeresponsavel', 'responsavel', 'responsável'] },
+  { key: 'dataAgendamento',      label: 'Data do agendamento',   required: false, aliases: ['dataagendamento', 'data_agendamento', 'datadoagendamento', 'data_do_agendamento'], hint: 'YYYY-MM-DDTHH:mm ou DD/MM/YYYY' },
+  { key: 'motivoNaoAgendamento', label: 'Motivo não agendamento',required: false, aliases: ['motivonaoagendamento', 'motivo_nao_agendamento', 'motivo', 'motivoparanaoagendamento', 'motivo_para_nao_agendamento'] },
+  { key: 'nomeResponsavel',      label: 'Responsável',           required: true,  aliases: ['nomeresponsavel', 'responsavel', 'responsável', 'nome_responsavel'] },
 ]
 
 function normalizeKey(s: string): string {
@@ -104,7 +106,7 @@ interface PreparedRow {
 function prepareRows(
   records: Record<string, string>[],
   mapping: Record<string, string>,
-  config: ReturnType<typeof useConfig>,
+  _config: ReturnType<typeof useConfig>,
 ): PreparedRow[] {
   return records.map((raw, idx) => {
     try {
@@ -113,23 +115,28 @@ function prepareRows(
         return col ? (raw[col] ?? '').trim() : ''
       }
 
-      const nome = get('nome')
-      const telefone = get('telefone')
-      const origem = get('origem')
-      const responsavel = pickFromList(get('nomeResponsavel'), config.responsaveis)
+      const nome = get('nome').slice(0, 200)
+      const telefoneRaw = get('telefone')
+      const origemRaw = get('origem')
+      const responsavelRaw = get('nomeResponsavel')
 
       if (!nome) throw new Error('Nome é obrigatório')
-      if (!telefone) throw new Error('Telefone é obrigatório')
-      if (!origem) throw new Error('Origem é obrigatória')
-      if (!responsavel) {
-        throw new Error(`Responsável precisa ser um dos: ${config.responsaveis.join(', ')}`)
-      }
+
+      // Os campos abaixo são obrigatórios no backend, mas aplicamos fallbacks
+      // pra não rejeitar linhas vindas de planilhas externas com vazios pontuais.
+      // Telefone tem MaxLength(20) no backend; cabemos nos limites de cada coluna.
+      const telefone = (telefoneRaw || 'Sem telefone').slice(0, 20)
+      const origem = (origemRaw || 'Sem origem').slice(0, 100)
+      const responsavel = (responsavelRaw || 'Não informado').slice(0, 100)
 
       const tipo = pickTipo(get('tipo'))
-      const tipoResgate = tipo === 'Resgate' ? pickFromList(get('tipoResgate'), config.tiposResgate) ?? undefined : undefined
+      const tipoResgateRaw = get('tipoResgate')
+      const tipoResgate = tipo === 'Resgate' && tipoResgateRaw ? tipoResgateRaw.slice(0, 50) : undefined
       const agendou = parseBool(get('agendouConsulta'))
       const dataAgendamento = agendou ? parseDateValue(get('dataAgendamento')) : undefined
-      const motivoNaoAgendamento = !agendou ? get('motivoNaoAgendamento') || 'Não informado' : undefined
+      const motivoNaoAgendamento = !agendou
+        ? (get('motivoNaoAgendamento') || 'Não informado').slice(0, 200)
+        : undefined
 
       const data: LeadFormData = {
         nome,
@@ -166,9 +173,32 @@ export function ImportView({ onBack }: ImportViewProps) {
   const [parseError, setParseError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
+  const [importErrors, setImportErrors] = useState<{ index: number; error: string }[]>([])
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState<string>('')
+  const [empresasError, setEmpresasError] = useState<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    empresasApi
+      .list()
+      .then((list) => {
+        if (cancelled) return
+        setEmpresas(list)
+        if (list.length === 1) setEmpresaId(list[0].id)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setEmpresasError(err instanceof Error ? err.message : 'Erro ao carregar empresas')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleFile = useCallback((file: File) => {
     setParseError(null)
@@ -213,9 +243,13 @@ export function ImportView({ onBack }: ImportViewProps) {
     return prepareRows(records, mapping, config)
   }, [records, mapping, config])
 
-  const validRows = prepared.filter((r) => r.ok)
-  const invalidRows = prepared.filter((r) => !r.ok)
-  const requiredMissing = fields.filter((f) => f.required && !mapping[f.key]).map((f) => f.label)
+  const validRows = useMemo(() => prepared.filter((r) => r.ok), [prepared])
+  const invalidRows = useMemo(() => prepared.filter((r) => !r.ok), [prepared])
+  const previewRows = useMemo(() => prepared.slice(0, 100), [prepared])
+  const requiredMissing = useMemo(
+    () => fields.filter((f) => f.required && !mapping[f.key]).map((f) => f.label),
+    [mapping],
+  )
 
   const downloadTemplate = () => {
     const headers = fields.map((f) => f.label)
@@ -238,16 +272,70 @@ export function ImportView({ onBack }: ImportViewProps) {
 
   const handleImport = async () => {
     if (importing) return
+    if (!empresaId) {
+      setParseError('Selecione a empresa de destino antes de importar.')
+      return
+    }
     setImporting(true)
     setImportedCount(null)
-    let count = 0
+    setImportErrors([])
+    setParseError(null)
+
+    const allPayload: CreateLeadPayload[] = []
+    const originalIndex: number[] = []
+    for (const r of validRows) {
+      if (!r.data) continue
+      originalIndex.push(r.index)
+      allPayload.push({
+        nome: r.data.nome,
+        telefone: r.data.telefone,
+        origem: r.data.origem,
+        tipo: r.data.tipo,
+        tipoResgate: r.data.tipoResgate,
+        interacao: r.data.interacao,
+        agendouConsulta: r.data.agendouConsulta,
+        pagamentoAntecipado: r.data.pagamentoAntecipado,
+        dataAgendamento: r.data.dataAgendamento,
+        motivoNaoAgendamento: r.data.motivoNaoAgendamento,
+        nomeResponsavel: r.data.nomeResponsavel,
+      })
+    }
+
+    setProgress({ done: 0, total: allPayload.length })
+
+    let totalCreated = 0
+    const allErrors: { index: number; error: string }[] = []
+
     try {
-      for (const row of validRows) {
-        if (!row.data) continue
-        addLead(row.data)
-        count++
+      for (let start = 0; start < allPayload.length; start += CHUNK_SIZE) {
+        const chunk = allPayload.slice(start, start + CHUNK_SIZE)
+        // Cede o thread pro browser respirar (paint, etc.) entre lotes.
+        await new Promise((r) => setTimeout(r, 0))
+        try {
+          const resp = await leadsApi.bulkCreate(empresaId, chunk)
+          totalCreated += resp.createdCount
+          for (const f of resp.failed) {
+            allErrors.push({
+              index: originalIndex[start + f.index] ?? start + f.index,
+              error: f.error,
+            })
+          }
+        } catch (err) {
+          // Se o request inteiro do chunk falhar, registra todos como falha.
+          const msg = err instanceof Error ? err.message : 'Erro de rede'
+          for (let k = 0; k < chunk.length; k++) {
+            allErrors.push({
+              index: originalIndex[start + k] ?? start + k,
+              error: msg,
+            })
+          }
+        }
+        setProgress({ done: Math.min(start + chunk.length, allPayload.length), total: allPayload.length })
       }
-      setImportedCount(count)
+      setImportedCount(totalCreated)
+      setImportErrors(allErrors)
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Erro ao importar.')
     } finally {
       setImporting(false)
     }
@@ -285,6 +373,28 @@ export function ImportView({ onBack }: ImportViewProps) {
           <Download className="h-4 w-4" />
           Baixar modelo CSV
         </button>
+      </div>
+
+      {/* Empresa selector */}
+      <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-4 mb-4 flex items-center gap-3">
+        <label className="text-[12px] uppercase tracking-wider text-white/55 shrink-0">Empresa de destino</label>
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          style={{ colorScheme: 'dark' }}
+          className="flex-1 h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-[13px] focus:outline-none focus:border-cyan-400/60"
+        >
+          <option value="">— selecione —</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nome}</option>
+          ))}
+        </select>
+        {empresasError && (
+          <span className="text-[11px] text-rose-300 inline-flex items-center gap-1">
+            <AlertCircle className="h-3.5 w-3.5" />
+            {empresasError}
+          </span>
+        )}
       </div>
 
       {/* Hero */}
@@ -440,7 +550,7 @@ export function ImportView({ onBack }: ImportViewProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {prepared.slice(0, 100).map((r) => (
+                  {previewRows.map((r) => (
                     <tr
                       key={r.index}
                       className={cn(
@@ -478,12 +588,43 @@ export function ImportView({ onBack }: ImportViewProps) {
             </div>
           </div>
 
+          {/* Progress */}
+          {importing && progress && (
+            <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-4">
+              <div className="flex items-center justify-between mb-2 text-[12px]">
+                <span className="text-white/65">Importando em lotes…</span>
+                <span className="tabular-nums text-cyan-300">
+                  {progress.done} / {progress.total} ({progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%)
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-white/[0.05] overflow-hidden">
+                <div
+                  className="h-full bg-cyan-400 transition-[width] duration-150"
+                  style={{ width: `${progress.total > 0 ? (progress.done / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
             {importedCount !== null ? (
-              <div className="flex items-center gap-2 px-4 h-11 rounded-2xl bg-cyan-500/[0.08] border border-cyan-400/30 text-cyan-200 text-sm">
-                <CheckCircle2 className="h-4 w-4 text-cyan-300" />
-                {importedCount} {importedCount === 1 ? 'lead importado' : 'leads importados'}.
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 px-4 h-11 rounded-2xl bg-cyan-500/[0.08] border border-cyan-400/30 text-cyan-200 text-sm">
+                  <CheckCircle2 className="h-4 w-4 text-cyan-300" />
+                  {importedCount} {importedCount === 1 ? 'lead importado' : 'leads importados'}.
+                </div>
+                {importErrors.length > 0 && (
+                  <div className="px-4 py-2 rounded-2xl bg-rose-500/[0.08] border border-rose-400/30 text-rose-200 text-xs max-w-md">
+                    <div className="font-semibold mb-1">{importErrors.length} linha(s) rejeitada(s) pelo servidor:</div>
+                    <ul className="list-disc list-inside space-y-0.5 max-h-24 overflow-auto">
+                      {importErrors.slice(0, 10).map((e) => (
+                        <li key={e.index}>linha {e.index + 1}: {e.error}</li>
+                      ))}
+                      {importErrors.length > 10 && <li>… +{importErrors.length - 10}</li>}
+                    </ul>
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-xs text-white/55">
@@ -500,7 +641,8 @@ export function ImportView({ onBack }: ImportViewProps) {
               </button>
               <button
                 onClick={handleImport}
-                disabled={importing || validRows.length === 0 || requiredMissing.length > 0}
+                disabled={importing || validRows.length === 0 || requiredMissing.length > 0 || !empresaId}
+                title={!empresaId ? 'Selecione a empresa de destino' : undefined}
                 className={cn(
                   'px-5 h-11 rounded-2xl text-sm font-semibold inline-flex items-center gap-2 transition-colors',
                   'bg-cyan-400 hover:bg-cyan-300 text-slate-900',

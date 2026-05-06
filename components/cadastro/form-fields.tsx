@@ -56,7 +56,7 @@ interface SelectInputProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label: string
   hint?: string
   error?: string
-  options: { value: string; label: string }[]
+  options: { value: string; label: string; disabled?: boolean }[]
   placeholder?: string
   containerClassName?: string
 }
@@ -88,7 +88,7 @@ export const SelectInput = forwardRef<HTMLSelectElement, SelectInputProps>(
             </option>
           )}
           {options.map((o) => (
-            <option key={o.value} value={o.value}>
+            <option key={o.value} value={o.value} disabled={o.disabled}>
               {o.label}
             </option>
           ))}
