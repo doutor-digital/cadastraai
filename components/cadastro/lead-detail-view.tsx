@@ -18,12 +18,14 @@ import {
 } from 'lucide-react'
 import { useCadastroStore, deleteLead } from '@/lib/cadastro-store'
 import { cn } from '@/lib/utils'
-import type { Lead, Recebimento } from '@/types'
+import type { Consulta, Lead, Recebimento, Tratamento } from '@/types'
 
 interface LeadDetailViewProps {
   leadId: string
   onBack: () => void
   onEdit: (lead: Lead) => void
+  onEditConsulta?: (consulta: Consulta) => void
+  onEditTratamento?: (tratamento: Tratamento) => void
   onDeleted: () => void
 }
 
@@ -99,7 +101,14 @@ function YesNo({ value }: { value: boolean }) {
   )
 }
 
-export function LeadDetailView({ leadId, onBack, onEdit, onDeleted }: LeadDetailViewProps) {
+export function LeadDetailView({
+  leadId,
+  onBack,
+  onEdit,
+  onEditConsulta,
+  onEditTratamento,
+  onDeleted,
+}: LeadDetailViewProps) {
   const store = useCadastroStore()
 
   const lead = useMemo(() => store.leads.find((l) => l.id === leadId), [store.leads, leadId])
@@ -286,32 +295,49 @@ export function LeadDetailView({ leadId, onBack, onEdit, onDeleted }: LeadDetail
           label="Agendamento"
           done={lead.agendouConsulta}
           detail={lead.agendouConsulta ? formatDate(lead.dataAgendamento) : 'Não agendou'}
+          onClick={() => onEdit(lead)}
+          actionLabel="Editar dados do agendamento"
         />
         <FunnelStep
           icon={ClipboardCheck}
           label="Consulta"
           done={Boolean(consulta)}
           detail={consulta ? formatDate(consulta.createdAt) : 'Sem consulta'}
+          onClick={consulta && onEditConsulta ? () => onEditConsulta(consulta) : undefined}
+          actionLabel={consulta ? 'Editar consulta' : 'Sem consulta para editar'}
         />
         <FunnelStep
           icon={HeartPulse}
           label="Tratamento"
           done={Boolean(tratamento)}
           detail={tratamento ? tratamento.planoTratamento : 'Sem tratamento'}
+          onClick={tratamento && onEditTratamento ? () => onEditTratamento(tratamento) : undefined}
+          actionLabel={tratamento ? 'Editar tratamento' : 'Sem tratamento para editar'}
         />
       </div>
 
       {/* Consulta */}
       {consulta && (
         <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 mb-4">
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
             <h3 className="text-[14px] font-semibold flex items-center gap-2">
               <ClipboardCheck className="h-4 w-4 text-cyan-400" />
               Consulta vinculada
             </h3>
-            <span className="text-[11px] text-white/45 tabular-nums">
-              {formatDate(consulta.createdAt)}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-white/45 tabular-nums">
+                {formatDate(consulta.createdAt)}
+              </span>
+              {onEditConsulta && (
+                <button
+                  onClick={() => onEditConsulta(consulta)}
+                  className="inline-flex items-center gap-1.5 px-3 h-8 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-900 font-semibold text-[12px] transition-colors"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Editar consulta
+                </button>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
             <InfoRow label="Valor da consulta" value={brl(consulta.valorConsulta)} />
@@ -329,14 +355,25 @@ export function LeadDetailView({ leadId, onBack, onEdit, onDeleted }: LeadDetail
       {/* Tratamento */}
       {tratamento && (
         <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 mb-4">
-          <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
             <h3 className="text-[14px] font-semibold flex items-center gap-2">
               <HeartPulse className="h-4 w-4 text-cyan-400" />
               Tratamento fechado
             </h3>
-            <span className="text-[11px] text-white/45 tabular-nums">
-              {formatDate(tratamento.createdAt)}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-white/45 tabular-nums">
+                {formatDate(tratamento.createdAt)}
+              </span>
+              {onEditTratamento && (
+                <button
+                  onClick={() => onEditTratamento(tratamento)}
+                  className="inline-flex items-center gap-1.5 px-3 h-8 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-900 font-semibold text-[12px] transition-colors"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Editar tratamento
+                </button>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
             <InfoRow label="Plano de tratamento" value={tratamento.planoTratamento} />
@@ -397,23 +434,38 @@ interface FunnelStepProps {
   label: string
   done: boolean
   detail: string
+  onClick?: () => void
+  actionLabel?: string
 }
 
-function FunnelStep({ icon: Icon, label, done, detail }: FunnelStepProps) {
+function FunnelStep({ icon: Icon, label, done, detail, onClick, actionLabel }: FunnelStepProps) {
+  const clickable = Boolean(onClick)
+  const Wrapper: React.ElementType = clickable ? 'button' : 'div'
   return (
-    <div
+    <Wrapper
+      type={clickable ? 'button' : undefined}
+      onClick={onClick}
+      aria-label={clickable ? actionLabel : undefined}
       className={cn(
-        'rounded-2xl p-4 border',
+        'group rounded-2xl p-4 border text-left w-full transition-colors',
         done
           ? 'border-cyan-400/30 bg-cyan-500/[0.06]'
           : 'border-white/[0.05] bg-[#15171b]',
+        clickable && 'cursor-pointer hover:border-cyan-300/60 hover:bg-cyan-500/[0.10] focus:outline-none focus:ring-2 focus:ring-cyan-400/40',
+        !clickable && 'cursor-default',
       )}
     >
       <div className="flex items-center gap-2 mb-2">
         <Icon className={cn('h-4 w-4', done ? 'text-cyan-300' : 'text-white/45')} />
         <span className="text-[11px] uppercase tracking-wider text-white/45">{label}</span>
+        {clickable && (
+          <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-cyan-300/80 group-hover:text-cyan-200">
+            <Pencil className="h-3 w-3" />
+            Editar
+          </span>
+        )}
       </div>
       <p className={cn('text-[13px]', done ? 'text-white' : 'text-white/55')}>{detail}</p>
-    </div>
+    </Wrapper>
   )
 }

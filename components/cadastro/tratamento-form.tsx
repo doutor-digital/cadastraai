@@ -1,12 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { HeartPulse, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet } from 'lucide-react'
+import { HeartPulse, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
-import { addTratamento, useCadastroStore } from '@/lib/cadastro-store'
+import { addTratamento, updateTratamento, useCadastroStore } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
 import type { Consulta, Lead, Tratamento } from '@/types'
 
@@ -14,6 +14,7 @@ interface TratamentoFormProps {
   onBack: () => void
   onSaved?: (tratamento: Tratamento) => void
   prefilledConsultaId?: string
+  editing?: Tratamento
 }
 
 interface FormState {
@@ -36,19 +37,46 @@ const initialState: FormState = {
   recebimentos: [],
 }
 
-export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: TratamentoFormProps) {
+function fromTratamento(t: Tratamento): FormState {
+  return {
+    consultaId: t.consultaId,
+    planoTratamento: t.planoTratamento,
+    planoPilates: t.planoPilates ?? '',
+    musculacao: t.musculacao ?? '',
+    procedimento: t.procedimento ?? '',
+    valorPlano: t.valorPlano,
+    recebimentos: t.recebimentos.map((r) => ({
+      valorRecebimento: r.valorRecebimento,
+      formaPagamento: r.formaPagamento,
+      dataRecebimento: r.dataRecebimento,
+    })),
+  }
+}
+
+export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }: TratamentoFormProps) {
   const store = useCadastroStore()
   const config = useConfig()
   const planoOptions = config.planosTratamento.map((p) => ({ value: p, label: p }))
   const usedConsultaIds = useMemo(() => new Set(store.tratamentos.map((t) => t.consultaId)), [store.tratamentos])
 
   const elegiveis = useMemo(
-    () => store.consultas.filter((c) => c.fechouTratamento && !usedConsultaIds.has(c.id)),
-    [store.consultas, usedConsultaIds],
+    () =>
+      store.consultas.filter(
+        (c) => !usedConsultaIds.has(c.id) || c.id === editing?.consultaId,
+      ),
+    [store.consultas, usedConsultaIds, editing],
   )
 
-  const [data, setData] = useState<FormState>({ ...initialState, consultaId: prefilledConsultaId ?? '' })
+  const [data, setData] = useState<FormState>(() =>
+    editing
+      ? fromTratamento(editing)
+      : { ...initialState, consultaId: prefilledConsultaId ?? '' },
+  )
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+
+  useEffect(() => {
+    if (editing) setData(fromTratamento(editing))
+  }, [editing])
 
   const selectedConsulta: Consulta | null = useMemo(
     () => store.consultas.find((c) => c.id === data.consultaId) ?? null,
@@ -74,7 +102,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
       return
     }
     try {
-      const tratamento = addTratamento({
+      const payload = {
         consultaId: data.consultaId,
         planoTratamento: data.planoTratamento,
         planoPilates: data.planoPilates || undefined,
@@ -82,9 +110,19 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
         procedimento: data.procedimento || undefined,
         valorPlano: data.valorPlano,
         recebimentos: data.recebimentos,
+      }
+      const tratamento = editing
+        ? updateTratamento(editing.id, payload)
+        : addTratamento(payload)
+      if (!tratamento) {
+        setFeedback({ kind: 'error', msg: 'Não foi possível salvar o tratamento.' })
+        return
+      }
+      setFeedback({
+        kind: 'success',
+        msg: editing ? 'Tratamento atualizado com sucesso.' : 'Tratamento cadastrado com sucesso.',
       })
-      setFeedback({ kind: 'success', msg: 'Tratamento cadastrado com sucesso.' })
-      setData(initialState)
+      if (!editing) setData(initialState)
       onSaved?.(tratamento)
     } catch (err) {
       setFeedback({
@@ -94,7 +132,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
     }
   }
 
-  if (elegiveis.length === 0) {
+  if (elegiveis.length === 0 && !editing) {
     return (
       <CadastroFormShell
         title="Cadastrar Tratamento"
@@ -104,9 +142,9 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
         onBack={onBack}
       >
         <div className="text-center py-12 px-4 rounded-xl border border-dashed border-white/10">
-          <p className="text-base text-foreground font-medium mb-2">Nenhuma consulta elegível</p>
+          <p className="text-base text-foreground font-medium mb-2">Nenhuma consulta disponível</p>
           <p className="text-sm text-muted-foreground">
-            Cadastre uma consulta marcada como &quot;Fechou tratamento&quot; para registrar o tratamento.
+            Cadastre uma consulta primeiro ou selecione outra que ainda não tenha tratamento vinculado.
           </p>
         </div>
       </CadastroFormShell>
@@ -123,9 +161,13 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
 
   return (
     <CadastroFormShell
-      title="Cadastrar Tratamento"
-      description="Tratamento fechado — registre plano, valores e recebimentos."
-      icon={HeartPulse}
+      title={editing ? 'Editar Tratamento' : 'Cadastrar Tratamento'}
+      description={
+        editing
+          ? 'Atualize os dados do tratamento abaixo.'
+          : 'Tratamento fechado — registre plano, valores e recebimentos.'
+      }
+      icon={editing ? Pencil : HeartPulse}
       accent="#34d399"
       onBack={onBack}
     >
@@ -181,7 +223,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
             options={consultaOptions}
             placeholder="Selecione uma consulta…"
             required
-            hint="Apenas consultas com tratamento fechado e ainda sem tratamento aparecem aqui."
+            hint="Aparecem aqui as consultas que ainda não têm tratamento vinculado."
           />
         )}
 
@@ -256,18 +298,18 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
           <button
             type="button"
             onClick={() => {
-              setData(initialState)
+              setData(editing ? fromTratamento(editing) : initialState)
               setFeedback(null)
             }}
             className="px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.03] text-sm text-muted-foreground hover:text-foreground hover:border-white/20 transition-colors"
           >
-            Limpar
+            {editing ? 'Restaurar' : 'Limpar'}
           </button>
           <button
             type="submit"
             className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-[0_0_24px_rgba(52,211,153,0.35)] hover:from-emerald-300 hover:to-emerald-400 transition-all"
           >
-            Cadastrar Tratamento
+            {editing ? 'Salvar alterações' : 'Cadastrar Tratamento'}
           </button>
         </div>
       </form>

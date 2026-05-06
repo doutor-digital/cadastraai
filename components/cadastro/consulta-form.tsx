@@ -1,18 +1,20 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ClipboardPlus, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog } from 'lucide-react'
+import { ClipboardPlus, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
-import { TextInput, SelectInput, TextareaInput, ToggleSwitch } from './form-fields'
+import { TextInput, SelectInput, ToggleSwitch } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
-import { addConsulta, useCadastroStore } from '@/lib/cadastro-store'
+import { addConsulta, updateConsulta, useCadastroStore } from '@/lib/cadastro-store'
+import { useConfig } from '@/lib/config-store'
 import { MOTIVOS_NAO_FECHAMENTO_DEFAULT, type Consulta, type CorSemaforo, type Lead } from '@/types'
 
 interface ConsultaFormProps {
   onBack: () => void
   onSaved?: (consulta: Consulta) => void
   prefilledLeadId?: string
+  editing?: Consulta
 }
 
 interface FormState {
@@ -37,6 +39,24 @@ const initialState: FormState = {
   compareceu: true,
   fechouTratamento: false,
   motivoNaoFechamento: '',
+}
+
+function fromConsulta(c: Consulta): FormState {
+  return {
+    leadId: c.leadId,
+    valorConsulta: c.valorConsulta,
+    pagamentoAntecipado: c.pagamentoAntecipado,
+    recebimentos: c.recebimentos.map((r) => ({
+      valorRecebimento: r.valorRecebimento,
+      formaPagamento: r.formaPagamento,
+      dataRecebimento: r.dataRecebimento,
+    })),
+    tratamentoIndicado: c.tratamentoIndicado,
+    orcamento: c.orcamento,
+    compareceu: c.compareceu,
+    fechouTratamento: c.fechouTratamento,
+    motivoNaoFechamento: c.motivoNaoFechamento ?? '',
+  }
 }
 
 const corClasses: Record<CorSemaforo, string> = {
@@ -87,21 +107,31 @@ function LeadCard({ lead }: { lead: Lead }) {
   )
 }
 
-export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormProps) {
+export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: ConsultaFormProps) {
   const store = useCadastroStore()
+  const config = useConfig()
+  const planoOptions = useMemo(
+    () => config.planosTratamento.map((p) => ({ value: p, label: p })),
+    [config.planosTratamento],
+  )
   const usedLeadIds = useMemo(() => new Set(store.consultas.map((c) => c.leadId)), [store.consultas])
 
   const availableLeads = useMemo(
     () =>
-      store.leads.filter((l) => !usedLeadIds.has(l.id) || l.id === prefilledLeadId),
-    [store.leads, usedLeadIds, prefilledLeadId],
+      store.leads.filter(
+        (l) => !usedLeadIds.has(l.id) || l.id === prefilledLeadId || l.id === editing?.leadId,
+      ),
+    [store.leads, usedLeadIds, prefilledLeadId, editing],
   )
 
-  const [data, setData] = useState<FormState>({
-    ...initialState,
-    leadId: prefilledLeadId ?? '',
-  })
+  const [data, setData] = useState<FormState>(() =>
+    editing ? fromConsulta(editing) : { ...initialState, leadId: prefilledLeadId ?? '' },
+  )
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+
+  useEffect(() => {
+    if (editing) setData(fromConsulta(editing))
+  }, [editing])
 
   const selectedLead = useMemo(
     () => store.leads.find((l) => l.id === data.leadId) ?? null,
@@ -127,7 +157,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
       return
     }
     try {
-      const consulta = addConsulta({
+      const payload = {
         leadId: data.leadId,
         valorConsulta: data.valorConsulta,
         pagamentoAntecipado: data.pagamentoAntecipado,
@@ -137,10 +167,22 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
         compareceu: data.compareceu,
         fechouTratamento: data.fechouTratamento,
         motivoNaoFechamento: data.motivoNaoFechamento,
-      })
+      }
+      const consulta = editing
+        ? updateConsulta(editing.id, payload)
+        : addConsulta(payload)
+      if (!consulta) {
+        setFeedback({ kind: 'error', msg: 'Não foi possível salvar a consulta.' })
+        return
+      }
       const leadName = store.leads.find((l) => l.id === consulta.leadId)?.nome ?? 'lead'
-      setFeedback({ kind: 'success', msg: `Consulta cadastrada para ${leadName}.` })
-      setData({ ...initialState })
+      setFeedback({
+        kind: 'success',
+        msg: editing
+          ? `Consulta de ${leadName} atualizada.`
+          : `Consulta cadastrada para ${leadName}.`,
+      })
+      if (!editing) setData({ ...initialState })
       onSaved?.(consulta)
     } catch (err) {
       setFeedback({
@@ -150,7 +192,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
     }
   }
 
-  if (availableLeads.length === 0) {
+  if (availableLeads.length === 0 && !editing) {
     return (
       <CadastroFormShell
         title="Cadastrar Consulta"
@@ -171,9 +213,13 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
 
   return (
     <CadastroFormShell
-      title="Cadastrar Consulta"
-      description="Consulta — vincula-se a um lead e pode gerar tratamento."
-      icon={ClipboardPlus}
+      title={editing ? 'Editar Consulta' : 'Cadastrar Consulta'}
+      description={
+        editing
+          ? 'Atualize os dados da consulta abaixo.'
+          : 'Consulta — vincula-se a um lead e pode gerar tratamento.'
+      }
+      icon={editing ? Pencil : ClipboardPlus}
       accent="#a78bfa"
       onBack={onBack}
     >
@@ -225,12 +271,18 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
           />
         </div>
 
-        <TextareaInput
+        <SelectInput
           label="Tratamento indicado"
-          placeholder="Descreva o tratamento sugerido…"
           value={data.tratamentoIndicado}
           onChange={(e) => set('tratamentoIndicado', e.target.value)}
+          options={planoOptions}
+          placeholder={
+            planoOptions.length === 0
+              ? 'Cadastre planos em Configurações'
+              : 'Selecione o plano indicado…'
+          }
           required
+          hint="Os planos vêm da lista 'Planos de tratamento' em Configurações."
         />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -308,18 +360,22 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
           <button
             type="button"
             onClick={() => {
-              setData({ ...initialState, leadId: prefilledLeadId ?? '' })
+              setData(
+                editing
+                  ? fromConsulta(editing)
+                  : { ...initialState, leadId: prefilledLeadId ?? '' },
+              )
               setFeedback(null)
             }}
             className="px-4 py-2.5 rounded-lg border border-white/10 bg-white/[0.03] text-sm text-muted-foreground hover:text-foreground hover:border-white/20 transition-colors"
           >
-            Limpar
+            {editing ? 'Restaurar' : 'Limpar'}
           </button>
           <button
             type="submit"
             className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-purple-400 to-fuchsia-500 shadow-[0_0_24px_rgba(167,139,250,0.35)] hover:from-purple-300 hover:to-fuchsia-400 transition-all"
           >
-            Cadastrar Consulta
+            {editing ? 'Salvar alterações' : 'Cadastrar Consulta'}
           </button>
         </div>
       </form>

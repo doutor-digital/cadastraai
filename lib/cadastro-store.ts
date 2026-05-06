@@ -199,6 +199,60 @@ export function updateLead(id: string, data: LeadFormData): Lead | null {
   return updated
 }
 
+export function updateConsulta(id: string, data: ConsultaFormData): Consulta | null {
+  ensureInit()
+  const existing = memoryState.consultas.find((c) => c.id === id)
+  if (!existing) return null
+  if (data.recebimentos.length > 2) {
+    throw new Error('Consulta aceita no máximo 2 recebimentos')
+  }
+  const recebimentos = buildRecebimentos(data.recebimentos, { consultaId: id })
+  const updated: Consulta = {
+    ...existing,
+    valorConsulta: data.valorConsulta,
+    pagamentoAntecipado: data.pagamentoAntecipado,
+    recebimentos,
+    tratamentoIndicado: data.tratamentoIndicado,
+    orcamento: data.orcamento,
+    compareceu: data.compareceu,
+    fechouTratamento: data.fechouTratamento,
+    motivoNaoFechamento: !data.fechouTratamento ? data.motivoNaoFechamento : undefined,
+  }
+  memoryState = {
+    ...memoryState,
+    consultas: memoryState.consultas.map((c) => (c.id === id ? updated : c)),
+  }
+  persist(memoryState)
+  emit()
+  return updated
+}
+
+export function updateTratamento(id: string, data: TratamentoFormData): Tratamento | null {
+  ensureInit()
+  const existing = memoryState.tratamentos.find((t) => t.id === id)
+  if (!existing) return null
+  if (data.recebimentos.length > 6) {
+    throw new Error('Tratamento aceita no máximo 6 recebimentos')
+  }
+  const recebimentos = buildRecebimentos(data.recebimentos, { tratamentoId: id })
+  const updated: Tratamento = {
+    ...existing,
+    planoTratamento: data.planoTratamento,
+    planoPilates: data.planoPilates,
+    musculacao: data.musculacao,
+    procedimento: data.procedimento,
+    valorPlano: data.valorPlano,
+    recebimentos,
+  }
+  memoryState = {
+    ...memoryState,
+    tratamentos: memoryState.tratamentos.map((t) => (t.id === id ? updated : t)),
+  }
+  persist(memoryState)
+  emit()
+  return updated
+}
+
 export function deleteLead(id: string) {
   ensureInit()
   memoryState = { ...memoryState, leads: memoryState.leads.filter((l) => l.id !== id) }

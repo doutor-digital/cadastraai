@@ -14,7 +14,8 @@ import { RecebimentosList } from '@/components/cadastro/recebimentos-list'
 import { EmpresaView } from '@/components/empresa/empresa-view'
 import { ImportView } from '@/components/cadastro/import-view'
 import { ConfigView } from '@/components/cadastro/config-view'
-import type { Lead } from '@/types'
+import { useCadastroStore } from '@/lib/cadastro-store'
+import type { Consulta, Lead, Tratamento } from '@/types'
 
 const validViews: DashboardView[] = [
   'dashboard',
@@ -40,7 +41,10 @@ export function DashboardContent() {
   const [chainedLeadId, setChainedLeadId] = useState<string | null>(null)
   const [chainedConsultaId, setChainedConsultaId] = useState<string | null>(null)
   const [editingLead, setEditingLead] = useState<Lead | null>(null)
+  const [editingConsulta, setEditingConsulta] = useState<Consulta | null>(null)
+  const [editingTratamento, setEditingTratamento] = useState<Tratamento | null>(null)
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null)
+  const store = useCadastroStore()
 
   useEffect(() => {
     const next = params.get('view')
@@ -52,6 +56,8 @@ export function DashboardContent() {
     setChainedLeadId(null)
     setChainedConsultaId(null)
     setEditingLead(null)
+    setEditingConsulta(null)
+    setEditingTratamento(null)
     setDetailLeadId(null)
     setView('dashboard')
   }
@@ -60,8 +66,20 @@ export function DashboardContent() {
     setChainedLeadId(null)
     setChainedConsultaId(null)
     if (v !== 'lead') setEditingLead(null)
+    if (v !== 'consulta') setEditingConsulta(null)
+    if (v !== 'tratamento') setEditingTratamento(null)
     if (v !== 'lead-detail') setDetailLeadId(null)
     setView(v)
+  }
+
+  const handleEditConsulta = (consulta: Consulta) => {
+    setEditingConsulta(consulta)
+    setView('consulta')
+  }
+
+  const handleEditTratamento = (tratamento: Tratamento) => {
+    setEditingTratamento(tratamento)
+    setView('tratamento')
   }
 
   const handleOpenLead = (lead: Lead) => {
@@ -109,6 +127,8 @@ export function DashboardContent() {
                   setView('leads-list')
                 }}
                 onEdit={handleEditLead}
+                onEditConsulta={handleEditConsulta}
+                onEditTratamento={handleEditTratamento}
                 onDeleted={() => {
                   setDetailLeadId(null)
                   setView('leads-list')
@@ -138,11 +158,27 @@ export function DashboardContent() {
             )}
             {view === 'consulta' && (
               <ConsultaForm
-                onBack={goDashboard}
+                onBack={() => {
+                  if (editingConsulta) {
+                    const lead = store.leads.find((l) => l.id === editingConsulta.leadId)
+                    setEditingConsulta(null)
+                    if (lead) {
+                      setDetailLeadId(lead.id)
+                      setView('lead-detail')
+                      return
+                    }
+                  }
+                  goDashboard()
+                }}
                 prefilledLeadId={chainedLeadId ?? undefined}
+                editing={editingConsulta ?? undefined}
                 onSaved={(consulta) => {
                   setChainedLeadId(null)
-                  if (consulta.fechouTratamento) {
+                  if (editingConsulta) {
+                    setEditingConsulta(null)
+                    setDetailLeadId(consulta.leadId)
+                    setView('lead-detail')
+                  } else {
                     setChainedConsultaId(consulta.id)
                     setView('tratamento')
                   }
@@ -151,9 +187,33 @@ export function DashboardContent() {
             )}
             {view === 'tratamento' && (
               <TratamentoForm
-                onBack={goDashboard}
+                onBack={() => {
+                  if (editingTratamento) {
+                    const consulta = store.consultas.find(
+                      (c) => c.id === editingTratamento.consultaId,
+                    )
+                    setEditingTratamento(null)
+                    if (consulta) {
+                      setDetailLeadId(consulta.leadId)
+                      setView('lead-detail')
+                      return
+                    }
+                  }
+                  goDashboard()
+                }}
                 prefilledConsultaId={chainedConsultaId ?? undefined}
-                onSaved={() => setChainedConsultaId(null)}
+                editing={editingTratamento ?? undefined}
+                onSaved={(tratamento) => {
+                  setChainedConsultaId(null)
+                  setEditingTratamento(null)
+                  const consulta = store.consultas.find((c) => c.id === tratamento.consultaId)
+                  if (consulta) {
+                    setDetailLeadId(consulta.leadId)
+                    setView('lead-detail')
+                  } else {
+                    setView('dashboard')
+                  }
+                }}
               />
             )}
             {view === 'recebimentos' && <RecebimentosList onBack={goDashboard} />}
