@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ClipboardPlus, CheckCircle2, AlertCircle } from 'lucide-react'
+import { ClipboardPlus, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, TextareaInput, ToggleSwitch } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import { addConsulta, useCadastroStore } from '@/lib/cadastro-store'
-import type { Consulta } from '@/types'
+import { MOTIVOS_NAO_FECHAMENTO_DEFAULT, type Consulta, type CorSemaforo, type Lead } from '@/types'
 
 interface ConsultaFormProps {
   onBack: () => void
@@ -22,6 +22,7 @@ interface FormState {
   recebimentos: RecebimentoInput[]
   tratamentoIndicado: string
   orcamento: number
+  compareceu: boolean
   fechouTratamento: boolean
   motivoNaoFechamento: string
 }
@@ -33,8 +34,57 @@ const initialState: FormState = {
   recebimentos: [],
   tratamentoIndicado: '',
   orcamento: 0,
+  compareceu: true,
   fechouTratamento: false,
   motivoNaoFechamento: '',
+}
+
+const corClasses: Record<CorSemaforo, string> = {
+  verde: 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]',
+  amarelo: 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]',
+  vermelho: 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.6)]',
+}
+
+function SemaforoDot({ cor }: { cor: CorSemaforo }) {
+  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${corClasses[cor]}`} aria-hidden />
+}
+
+function LeadCard({ lead }: { lead: Lead }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.05] p-4"
+    >
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-cyan-300 font-semibold mb-3">
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Lead vinculado a esta consulta
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+        <div className="flex items-center gap-2">
+          <UserIcon className="h-4 w-4 text-cyan-300/80 shrink-0" />
+          <div>
+            <div className="text-xs text-muted-foreground">Nome</div>
+            <div className="font-medium text-foreground">{lead.nome}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Phone className="h-4 w-4 text-cyan-300/80 shrink-0" />
+          <div>
+            <div className="text-xs text-muted-foreground">Telefone</div>
+            <div className="font-medium text-foreground">{lead.telefone}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <UserCog className="h-4 w-4 text-cyan-300/80 shrink-0" />
+          <div>
+            <div className="text-xs text-muted-foreground">Responsável</div>
+            <div className="font-medium text-foreground">{lead.nomeResponsavel}</div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  )
 }
 
 export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormProps) {
@@ -52,6 +102,11 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
     leadId: prefilledLeadId ?? '',
   })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+
+  const selectedLead = useMemo(
+    () => store.leads.find((l) => l.id === data.leadId) ?? null,
+    [store.leads, data.leadId],
+  )
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
@@ -79,6 +134,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
         recebimentos: data.recebimentos,
         tratamentoIndicado: data.tratamentoIndicado,
         orcamento: data.orcamento,
+        compareceu: data.compareceu,
         fechouTratamento: data.fechouTratamento,
         motivoNaoFechamento: data.motivoNaoFechamento,
       })
@@ -116,35 +172,34 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
   return (
     <CadastroFormShell
       title="Cadastrar Consulta"
-      description="Consulta comparecida — vincula-se a um lead e pode gerar tratamento."
+      description="Consulta — vincula-se a um lead e pode gerar tratamento."
       icon={ClipboardPlus}
       accent="#a78bfa"
       onBack={onBack}
     >
       <form onSubmit={handleSubmit} className="space-y-6">
-        {prefilledLeadId && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-start gap-2 p-3 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] text-cyan-100 text-sm"
-          >
-            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-cyan-300" />
-            <span>
-              Lead recém-cadastrado já selecionado — finalize a consulta logo abaixo.
-            </span>
-          </motion.div>
+        {selectedLead ? (
+          <LeadCard lead={selectedLead} />
+        ) : (
+          <SelectInput
+            label="Lead"
+            value={data.leadId}
+            onChange={(e) => set('leadId', e.target.value)}
+            options={availableLeads.map((l) => ({
+              value: l.id,
+              label: `${l.nome} — ${l.telefone}`,
+            }))}
+            placeholder="Selecione um lead…"
+            required
+            hint="Apenas leads ainda sem consulta aparecem aqui."
+          />
         )}
-        <SelectInput
-          label="Lead"
-          value={data.leadId}
-          onChange={(e) => set('leadId', e.target.value)}
-          options={availableLeads.map((l) => ({
-            value: l.id,
-            label: `${l.nome} — ${l.telefone}`,
-          }))}
-          placeholder="Selecione um lead…"
-          required
-          hint="Apenas leads ainda sem consulta aparecem aqui."
+
+        <ToggleSwitch
+          label="Compareceu na consulta?"
+          description="Marque se o lead realmente apareceu no horário marcado"
+          checked={data.compareceu}
+          onChange={(v) => set('compareceu', v)}
         />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -194,14 +249,33 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId }: ConsultaFormP
         </div>
 
         {!data.fechouTratamento && (
-          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
-            <TextareaInput
-              label="Motivo do não fechamento"
-              placeholder="Descreva o motivo…"
-              value={data.motivoNaoFechamento}
-              onChange={(e) => set('motivoNaoFechamento', e.target.value)}
-              required
-            />
+          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
+            <label className="block text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+              Motivo do não fechamento
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {MOTIVOS_NAO_FECHAMENTO_DEFAULT.map((m) => {
+                const active = data.motivoNaoFechamento === m.nome
+                return (
+                  <button
+                    type="button"
+                    key={m.nome}
+                    onClick={() => set('motivoNaoFechamento', m.nome)}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
+                      active
+                        ? 'border-purple-400/60 bg-purple-500/10 text-foreground'
+                        : 'border-white/10 bg-white/[0.02] text-muted-foreground hover:border-white/20 hover:text-foreground'
+                    }`}
+                  >
+                    <SemaforoDot cor={m.cor} />
+                    <span className="flex-1">{m.nome}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground pt-1">
+              Não achou o motivo? Vá em <strong>Configurações da empresa</strong> para adicionar mais.
+            </p>
           </motion.div>
         )}
 

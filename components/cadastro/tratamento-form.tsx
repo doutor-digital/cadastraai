@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { HeartPulse, CheckCircle2, AlertCircle } from 'lucide-react'
+import { HeartPulse, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import { addTratamento, useCadastroStore } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
-import type { Tratamento } from '@/types'
+import type { Consulta, Lead, Tratamento } from '@/types'
 
 interface TratamentoFormProps {
   onBack: () => void
@@ -49,6 +49,15 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
 
   const [data, setData] = useState<FormState>({ ...initialState, consultaId: prefilledConsultaId ?? '' })
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+
+  const selectedConsulta: Consulta | null = useMemo(
+    () => store.consultas.find((c) => c.id === data.consultaId) ?? null,
+    [store.consultas, data.consultaId],
+  )
+  const selectedLead: Lead | null = useMemo(
+    () => (selectedConsulta ? store.leads.find((l) => l.id === selectedConsulta.leadId) ?? null : null),
+    [store.leads, selectedConsulta],
+  )
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
@@ -121,27 +130,60 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId }: Tratame
       onBack={onBack}
     >
       <form onSubmit={handleSubmit} className="space-y-6">
-        {prefilledConsultaId && (
+        {selectedLead && selectedConsulta ? (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-start gap-2 p-3 rounded-lg border border-emerald-400/30 bg-emerald-500/[0.07] text-emerald-100 text-sm"
+            className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-4"
           >
-            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-300" />
-            <span>
-              Consulta recém-cadastrada já selecionada — finalize o tratamento logo abaixo.
-            </span>
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-emerald-300 font-semibold mb-3">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Lead e consulta vinculados a este tratamento
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <UserIcon className="h-4 w-4 text-emerald-300/80 shrink-0" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Nome</div>
+                  <div className="font-medium text-foreground">{selectedLead.nome}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Phone className="h-4 w-4 text-emerald-300/80 shrink-0" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Telefone</div>
+                  <div className="font-medium text-foreground">{selectedLead.telefone}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <UserCog className="h-4 w-4 text-emerald-300/80 shrink-0" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Responsável</div>
+                  <div className="font-medium text-foreground">{selectedLead.nomeResponsavel}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Wallet className="h-4 w-4 text-emerald-300/80 shrink-0" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Orçamento</div>
+                  <div className="font-medium text-foreground">
+                    R$ {selectedConsulta.orcamento.toLocaleString('pt-BR')}
+                  </div>
+                </div>
+              </div>
+            </div>
           </motion.div>
+        ) : (
+          <SelectInput
+            label="Consulta vinculada"
+            value={data.consultaId}
+            onChange={(e) => set('consultaId', e.target.value)}
+            options={consultaOptions}
+            placeholder="Selecione uma consulta…"
+            required
+            hint="Apenas consultas com tratamento fechado e ainda sem tratamento aparecem aqui."
+          />
         )}
-        <SelectInput
-          label="Consulta vinculada"
-          value={data.consultaId}
-          onChange={(e) => set('consultaId', e.target.value)}
-          options={consultaOptions}
-          placeholder="Selecione uma consulta…"
-          required
-          hint="Apenas consultas com tratamento fechado e ainda sem tratamento aparecem aqui."
-        />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SelectInput

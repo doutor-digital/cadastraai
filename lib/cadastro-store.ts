@@ -137,6 +137,7 @@ export function addConsulta(data: ConsultaFormData): Consulta {
     recebimentos,
     tratamentoIndicado: data.tratamentoIndicado,
     orcamento: data.orcamento,
+    compareceu: data.compareceu,
     fechouTratamento: data.fechouTratamento,
     motivoNaoFechamento: !data.fechouTratamento ? data.motivoNaoFechamento : undefined,
     createdAt: nowIso(),

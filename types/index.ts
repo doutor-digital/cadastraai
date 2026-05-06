@@ -26,6 +26,7 @@ export interface GoogleAuthPayload {
 // Prisma Schema Types - Lead (Cadastro Geral)
 export interface Lead {
   id: string
+  empresaId?: string
   nome: string
   telefone: string
   origem: string
@@ -51,11 +52,37 @@ export interface Consulta {
   recebimentos: Recebimento[]
   tratamentoIndicado: string
   orcamento: number
+  compareceu: boolean
   fechouTratamento: boolean
   motivoNaoFechamento?: string
   createdAt: string
   tratamento?: Tratamento
 }
+
+// Cor do semáforo de motivos de não fechamento.
+export type CorSemaforo = 'verde' | 'amarelo' | 'vermelho'
+
+export interface MotivoNaoFechamento {
+  id: string
+  empresaId: string
+  nome: string
+  cor: CorSemaforo
+  isDefault: boolean
+  createdAt: string
+}
+
+// Lista padrão usada no fluxo local (offline / demo) — espelha o seed do backend.
+export const MOTIVOS_NAO_FECHAMENTO_DEFAULT: { nome: string; cor: CorSemaforo }[] = [
+  { nome: 'Fechou tratamento total', cor: 'verde' },
+  { nome: 'Fechou tratamento parcial', cor: 'verde' },
+  { nome: 'Assinou contrato, sem entrada', cor: 'amarelo' },
+  { nome: 'Vai decidir com familiares', cor: 'amarelo' },
+  { nome: 'Vai verificar a melhor forma de pagamento', cor: 'amarelo' },
+  { nome: 'Solicitado exame de imagem', cor: 'amarelo' },
+  { nome: 'Mora fora +50km', cor: 'vermelho' },
+  { nome: 'Outra patologia', cor: 'vermelho' },
+  { nome: 'Sem condições financeiras', cor: 'vermelho' },
+]
 
 // Prisma Schema Types - Tratamento (Tratamentos Fechados)
 export interface Tratamento {
@@ -241,6 +268,7 @@ export interface ConsultaFormData {
   }[]
   tratamentoIndicado: string
   orcamento: number
+  compareceu: boolean
   fechouTratamento: boolean
   motivoNaoFechamento?: string
 }

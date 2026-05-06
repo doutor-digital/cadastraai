@@ -28,7 +28,7 @@ class ApiClient {
     return this.token
   }
 
-  private async request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
+  async request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
     const { params, ...fetchConfig } = config
 
     let url = `${this.baseUrl}${endpoint}`
@@ -71,6 +71,13 @@ class ApiClient {
   put<T>(endpoint: string, data?: unknown): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PUT',
+      body: data ? JSON.stringify(data) : undefined,
+    })
+  }
+
+  patch<T>(endpoint: string, data?: unknown): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
       body: data ? JSON.stringify(data) : undefined,
     })
   }
@@ -233,4 +240,187 @@ export const invitesApi = {
     api.post<AuthResponseDto>(`/api/invites/${token}/accept-password`, data),
   acceptWithGoogle: (token: string, idToken: string) =>
     api.post<AuthResponseDto>(`/api/invites/${token}/accept-google`, { idToken }),
+}
+
+// ============================================================================
+// Domínio: Lead / Consulta / Tratamento / Recebimento / MotivoNaoFechamento
+// ============================================================================
+
+export type CorSemaforoDto = 'verde' | 'amarelo' | 'vermelho'
+
+export interface RecebimentoDto {
+  id: string
+  consultaId?: string | null
+  tratamentoId?: string | null
+  valorRecebimento: number
+  formaPagamento: string
+  dataRecebimento: string
+}
+
+export interface TratamentoDto {
+  id: string
+  consultaId: string
+  planoTratamento: string
+  planoPilates?: string | null
+  musculacao?: string | null
+  procedimento?: string | null
+  valorPlano: number
+  createdAt: string
+  recebimentos: RecebimentoDto[]
+}
+
+export interface ConsultaDto {
+  id: string
+  leadId: string
+  valorConsulta: number
+  pagamentoAntecipado: boolean
+  tratamentoIndicado: string
+  orcamento: number
+  compareceu: boolean
+  fechouTratamento: boolean
+  motivoNaoFechamento?: string | null
+  createdAt: string
+  tratamento?: TratamentoDto | null
+  recebimentos: RecebimentoDto[]
+}
+
+export interface LeadSummaryDto {
+  id: string
+  empresaId: string
+  nome: string
+  telefone: string
+  origem: string
+  tipo: string
+  tipoResgate?: string | null
+  interacao: boolean
+  agendouConsulta: boolean
+  pagamentoAntecipado: boolean
+  dataAgendamento?: string | null
+  motivoNaoAgendamento?: string | null
+  nomeResponsavel: string
+  createdAt: string
+  temConsulta: boolean
+  compareceu?: boolean | null
+  fechouTratamento?: boolean | null
+  motivoNaoFechamento?: string | null
+}
+
+export interface LeadDetailDto {
+  id: string
+  empresaId: string
+  nome: string
+  telefone: string
+  origem: string
+  tipo: string
+  tipoResgate?: string | null
+  interacao: boolean
+  agendouConsulta: boolean
+  pagamentoAntecipado: boolean
+  dataAgendamento?: string | null
+  motivoNaoAgendamento?: string | null
+  nomeResponsavel: string
+  createdAt: string
+  consulta?: ConsultaDto | null
+}
+
+export interface MotivoNaoFechamentoDto {
+  id: string
+  empresaId: string
+  nome: string
+  cor: CorSemaforoDto
+  isDefault: boolean
+  createdAt: string
+}
+
+export interface CreateLeadPayload {
+  nome: string
+  telefone: string
+  origem: string
+  tipo: string
+  tipoResgate?: string
+  interacao: boolean
+  agendouConsulta: boolean
+  pagamentoAntecipado: boolean
+  dataAgendamento?: string
+  motivoNaoAgendamento?: string
+  nomeResponsavel: string
+}
+
+export type UpdateLeadPayload = Partial<CreateLeadPayload>
+
+export interface CreateConsultaPayload {
+  valorConsulta: number
+  pagamentoAntecipado: boolean
+  tratamentoIndicado: string
+  orcamento: number
+  compareceu: boolean
+  fechouTratamento: boolean
+  motivoNaoFechamento?: string
+}
+
+export type UpdateConsultaPayload = Partial<CreateConsultaPayload>
+
+export interface CreateTratamentoPayload {
+  planoTratamento: string
+  planoPilates?: string
+  musculacao?: string
+  procedimento?: string
+  valorPlano: number
+}
+
+export type UpdateTratamentoPayload = Partial<CreateTratamentoPayload>
+
+export interface CreateRecebimentoPayload {
+  valorRecebimento: number
+  formaPagamento: string
+  dataRecebimento: string
+}
+
+// ----- Leads -----
+export const leadsApi = {
+  list: (empresaId: string) =>
+    api.get<LeadSummaryDto[]>(`/api/empresas/${empresaId}/leads`),
+  get: (leadId: string) => api.get<LeadDetailDto>(`/api/leads/${leadId}`),
+  create: (empresaId: string, data: CreateLeadPayload) =>
+    api.post<LeadDetailDto>(`/api/empresas/${empresaId}/leads`, data),
+  update: (leadId: string, data: UpdateLeadPayload) =>
+    api.patch<LeadDetailDto>(`/api/leads/${leadId}`, data),
+  delete: (leadId: string) => api.delete<void>(`/api/leads/${leadId}`),
+}
+
+// ----- Consultas -----
+export const consultasApi = {
+  create: (leadId: string, data: CreateConsultaPayload) =>
+    api.post<ConsultaDto>(`/api/leads/${leadId}/consulta`, data),
+  update: (consultaId: string, data: UpdateConsultaPayload) =>
+    api.patch<ConsultaDto>(`/api/consultas/${consultaId}`, data),
+  delete: (consultaId: string) => api.delete<void>(`/api/consultas/${consultaId}`),
+}
+
+// ----- Tratamentos -----
+export const tratamentosApi = {
+  create: (consultaId: string, data: CreateTratamentoPayload) =>
+    api.post<TratamentoDto>(`/api/consultas/${consultaId}/tratamento`, data),
+  update: (tratamentoId: string, data: UpdateTratamentoPayload) =>
+    api.patch<TratamentoDto>(`/api/tratamentos/${tratamentoId}`, data),
+  delete: (tratamentoId: string) => api.delete<void>(`/api/tratamentos/${tratamentoId}`),
+}
+
+// ----- Recebimentos -----
+export const recebimentosApi = {
+  createForConsulta: (consultaId: string, data: CreateRecebimentoPayload) =>
+    api.post<RecebimentoDto>(`/api/consultas/${consultaId}/recebimentos`, data),
+  createForTratamento: (tratamentoId: string, data: CreateRecebimentoPayload) =>
+    api.post<RecebimentoDto>(`/api/tratamentos/${tratamentoId}/recebimentos`, data),
+  delete: (recebimentoId: string) => api.delete<void>(`/api/recebimentos/${recebimentoId}`),
+}
+
+// ----- Motivos de não fechamento -----
+export const motivosNaoFechamentoApi = {
+  list: (empresaId: string) =>
+    api.get<MotivoNaoFechamentoDto[]>(`/api/empresas/${empresaId}/motivos-nao-fechamento`),
+  create: (empresaId: string, data: { nome: string; cor: CorSemaforoDto }) =>
+    api.post<MotivoNaoFechamentoDto>(`/api/empresas/${empresaId}/motivos-nao-fechamento`, data),
+  delete: (empresaId: string, motivoId: string) =>
+    api.delete<void>(`/api/empresas/${empresaId}/motivos-nao-fechamento/${motivoId}`),
 }

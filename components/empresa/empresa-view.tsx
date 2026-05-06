@@ -30,6 +30,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { AvatarCircle } from '@/components/ui/avatar-circle'
+import { MotivosNaoFechamentoSection } from './motivos-nao-fechamento'
 
 interface EmpresaViewProps {
   onBack: () => void
@@ -509,8 +510,11 @@ export function EmpresaView({ onBack }: EmpresaViewProps) {
             </div>
           </div>
 
+          {/* Motivos de não fechamento (semáforo) */}
+          <MotivosNaoFechamentoSection empresaId={active.id} canEdit={canEdit} />
+
           {/* Members table */}
-          <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] overflow-hidden">
+          <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] overflow-hidden mt-5">
             <div className="px-6 h-14 flex items-center justify-between border-b border-white/[0.05]">
               <div className="flex items-center gap-2">
                 <Users className="h-4 w-4 text-cyan-400" />
