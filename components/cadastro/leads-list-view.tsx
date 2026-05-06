@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, Pencil, Trash2, Search, UserPlus, Users } from 'lucide-react'
-import { useCadastroStore, deleteLead } from '@/lib/cadastro-store'
+import { deleteLead } from '@/lib/cadastro-store'
+import { useMergedLeads } from '@/lib/leads-merged'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
 
@@ -27,13 +28,13 @@ function formatDate(iso: string): string {
 }
 
 export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsListViewProps) {
-  const store = useCadastroStore()
+  const { leads, loading, error } = useMergedLeads()
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'todos' | 'agendados' | 'nao_agendados'>('todos')
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return store.leads.filter((l) => {
+    return leads.filter((l) => {
       if (statusFilter === 'agendados' && !l.agendouConsulta) return false
       if (statusFilter === 'nao_agendados' && l.agendouConsulta) return false
       if (!q) return true
@@ -44,7 +45,7 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
         l.nomeResponsavel.toLowerCase().includes(q)
       )
     })
-  }, [store.leads, query, statusFilter])
+  }, [leads, query, statusFilter])
 
   const handleDelete = (lead: Lead) => {
     if (!confirm(`Apagar o lead "${lead.nome}"? Esta ação não pode ser desfeita.`)) return
@@ -78,8 +79,14 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
           </div>
           <div className="flex-1">
             <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Cadastros</p>
-            <h1 className="text-[28px] font-bold tracking-tight leading-none">Leads ({store.leads.length})</h1>
-            <p className="text-[13px] text-cyan-100/85 mt-2">Gerencie, edite e remova os leads cadastrados.</p>
+            <h1 className="text-[28px] font-bold tracking-tight leading-none">
+              Leads ({loading ? '…' : leads.length})
+            </h1>
+            <p className="text-[13px] text-cyan-100/85 mt-2">
+              {error
+                ? `Mostrando apenas dados locais — ${error}`
+                : 'Gerencie, edite e remova os leads cadastrados.'}
+            </p>
           </div>
           <button
             onClick={onCreateNew}
@@ -128,8 +135,10 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
           <div className="px-6 py-16 text-center">
             <p className="text-base text-white/85 font-medium mb-1">Nenhum lead encontrado</p>
             <p className="text-sm text-white/55">
-              {store.leads.length === 0
-                ? 'Cadastre seu primeiro lead clicando em "Novo Lead" acima.'
+              {leads.length === 0
+                ? loading
+                  ? 'Carregando leads…'
+                  : 'Cadastre seu primeiro lead clicando em "Novo Lead" acima.'
                 : 'Ajuste a busca ou os filtros para encontrar o que você procura.'}
             </p>
           </div>

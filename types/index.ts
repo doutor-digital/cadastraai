@@ -255,6 +255,7 @@ export interface LeadFormData {
   dataAgendamento?: string
   motivoNaoAgendamento?: string
   nomeResponsavel: string
+  createdAt?: string
 }
 
 export interface ConsultaFormData {

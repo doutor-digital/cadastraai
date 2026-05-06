@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { DashboardHeader } from '@/components/dashboard/header'
 import { useCadastroStore, useIsClient } from '@/lib/cadastro-store'
+import { useMergedLeads } from '@/lib/leads-merged'
 import { AnimatedNumber } from '@/components/ui/animated-number'
 import { cn } from '@/lib/utils'
 import type { DashboardFilters, Lead, Consulta, Tratamento } from '@/types'
@@ -57,6 +58,8 @@ interface Computed {
   agendados: number
   consultas: number
   prevConsultas: number
+  comparecidas: number
+  prevComparecidas: number
   tratamentos: number
   prevTratamentos: number
   receita: number
@@ -72,6 +75,7 @@ function compute(
   leads: Lead[],
   consultas: Consulta[],
   tratamentos: Tratamento[],
+  apiCompareceuFlags: { compareceu: boolean | null | undefined; createdAt: string }[],
   win: ReturnType<typeof periodWindow>,
 ): Computed {
   const leadsCurr = leads.filter((l) => inWindow(l.createdAt, win.startMs))
@@ -80,6 +84,17 @@ function compute(
   const consultasPrev = consultas.filter((c) => inWindow(c.createdAt, win.prevStartMs, win.prevEndMs))
   const tratamentosCurr = tratamentos.filter((t) => inWindow(t.createdAt, win.startMs))
   const tratamentosPrev = tratamentos.filter((t) => inWindow(t.createdAt, win.prevStartMs, win.prevEndMs))
+
+  // Comparecidas = consultas locais que compareceram + leads do servidor
+  // que já têm consulta marcada como compareceu.
+  const comparecidasCurr =
+    consultasCurr.filter((c) => c.compareceu).length +
+    apiCompareceuFlags.filter((f) => f.compareceu === true && inWindow(f.createdAt, win.startMs)).length
+  const comparecidasPrev =
+    consultasPrev.filter((c) => c.compareceu).length +
+    apiCompareceuFlags.filter(
+      (f) => f.compareceu === true && inWindow(f.createdAt, win.prevStartMs, win.prevEndMs),
+    ).length
 
   const sumRecs = (list: Array<{ recebimentos: { valorRecebimento: number }[] }>) =>
     list.reduce((s, item) => s + item.recebimentos.reduce((a, r) => a + r.valorRecebimento, 0), 0)
@@ -142,6 +157,8 @@ function compute(
     agendados: leadsCurr.filter((l) => l.agendouConsulta).length,
     consultas: consultasCurr.length,
     prevConsultas: consultasPrev.length,
+    comparecidas: comparecidasCurr,
+    prevComparecidas: comparecidasPrev,
     tratamentos: tratamentosCurr.length,
     prevTratamentos: tratamentosPrev.length,
     receita: receitaCurr,
@@ -159,6 +176,7 @@ export function DashboardView() {
   const [tickNow, setTickNow] = useState(() => Date.now())
   const store = useCadastroStore()
   const isClient = useIsClient()
+  const { leads: mergedLeads, apiSummaries } = useMergedLeads()
 
   useEffect(() => {
     const id = setInterval(() => setTickNow(Date.now()), 6000)
@@ -172,6 +190,7 @@ export function DashboardView() {
       return {
         leads: 0, prevLeads: 0, agendados: 0,
         consultas: 0, prevConsultas: 0,
+        comparecidas: 0, prevComparecidas: 0,
         tratamentos: 0, prevTratamentos: 0,
         receita: 0, prevReceita: 0, ticketMedio: 0,
         origens: [],
@@ -180,12 +199,14 @@ export function DashboardView() {
         planos: [],
       }
     }
-    return compute(store.leads, store.consultas, store.tratamentos, win)
-  }, [store, win, isClient])
+    const apiFlags = apiSummaries.map((s) => ({ compareceu: s.compareceu, createdAt: s.createdAt }))
+    return compute(mergedLeads, store.consultas, store.tratamentos, apiFlags, win)
+  }, [mergedLeads, apiSummaries, store, win, isClient])
 
   const dReceita = deltaPct(m.receita, m.prevReceita)
   const dLeads = deltaPct(m.leads, m.prevLeads)
   const dTratamentos = deltaPct(m.tratamentos, m.prevTratamentos)
+  const dComparecidas = deltaPct(m.comparecidas, m.prevComparecidas)
 
   const funilTotal = m.leads || 1
 
@@ -235,15 +256,15 @@ export function DashboardView() {
             </div>
           </div>
 
-          {/* Tratamentos */}
+          {/* Comparecidas */}
           <div className="col-span-1 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-5 flex flex-col justify-between">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Fechados</p>
+            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Comparecidas</p>
             <div>
               <p className="text-[36px] font-bold tabular-nums leading-none">
-                <AnimatedNumber value={m.tratamentos} />
+                <AnimatedNumber value={m.comparecidas} />
               </p>
-              <p className={`text-[11px] mt-1 tabular-nums ${dTratamentos.positive ? 'text-cyan-400' : 'text-rose-400'}`}>
-                {dTratamentos.value}
+              <p className={`text-[11px] mt-1 tabular-nums ${dComparecidas.positive ? 'text-cyan-400' : 'text-rose-400'}`}>
+                {dComparecidas.value}
               </p>
             </div>
           </div>
@@ -284,6 +305,19 @@ export function DashboardView() {
           {/* Top origens / Planos / Formas (col 5–6, row 1–2) */}
           <TopBreakdownCard origens={m.origens} planos={m.planos} formas={m.formas} />
 
+
+          {/* Fechados */}
+          <div className="col-span-1 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-5 flex flex-col justify-between">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Fechados</p>
+            <div>
+              <p className="text-[36px] font-bold tabular-nums leading-none">
+                <AnimatedNumber value={m.tratamentos} />
+              </p>
+              <p className={`text-[11px] mt-1 tabular-nums ${dTratamentos.positive ? 'text-cyan-400' : 'text-rose-400'}`}>
+                {dTratamentos.value}
+              </p>
+            </div>
+          </div>
 
           {/* Ticket */}
           <div className="col-span-1 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-5 flex flex-col justify-between">

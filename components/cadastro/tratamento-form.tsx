@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { HeartPulse, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
-import { TextInput, SelectInput } from './form-fields'
+import { TextInput, SelectInput, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import { addTratamento, updateTratamento, useCadastroStore } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
@@ -148,10 +148,12 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
   const consultaOptions = elegiveis.map((c) => {
     const lead = store.leads.find((l) => l.id === c.leadId)
     const jaTemTratamento = usedConsultaIds.has(c.id) && c.id !== editing?.consultaId
-    const base = `${lead?.nome ?? 'Lead'} — orçamento R$ ${c.orcamento.toLocaleString('pt-BR')}`
+    const nomeLead = lead?.nome ?? 'Lead'
+    const orc = `R$ ${c.orcamento.toLocaleString('pt-BR')}`
     return {
       value: c.id,
-      label: jaTemTratamento ? `${base} · já tem tratamento` : base,
+      label: jaTemTratamento ? `${nomeLead} · já tem tratamento` : nomeLead,
+      subtitle: `orçamento ${orc}`,
       disabled: jaTemTratamento,
     }
   })
@@ -213,14 +215,15 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
             </div>
           </motion.div>
         ) : (
-          <SelectInput
+          <SearchSelect
             label="Consulta vinculada"
             value={data.consultaId}
-            onChange={(e) => set('consultaId', e.target.value)}
+            onChange={(v) => set('consultaId', v)}
             options={consultaOptions}
             placeholder="Selecione uma consulta…"
+            searchPlaceholder="Pesquisar pelo nome do lead…"
             required
-            hint="Todas as consultas aparecem; as marcadas como 'já tem tratamento' ficam desabilitadas."
+            hint="Digite parte do nome do lead. As consultas marcadas como 'já tem tratamento' ficam desabilitadas."
           />
         )}
 

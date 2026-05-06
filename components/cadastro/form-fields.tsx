@@ -1,6 +1,18 @@
 'use client'
 
-import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+  type ReactNode,
+} from 'react'
+import { Search, Check, X, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface FieldShellProps {
@@ -98,6 +110,225 @@ export const SelectInput = forwardRef<HTMLSelectElement, SelectInputProps>(
   },
 )
 SelectInput.displayName = 'SelectInput'
+
+interface SearchSelectOption {
+  value: string
+  label: string
+  subtitle?: string
+  disabled?: boolean
+}
+
+interface SearchSelectProps {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: SearchSelectOption[]
+  placeholder?: string
+  searchPlaceholder?: string
+  emptyMessage?: string
+  required?: boolean
+  hint?: string
+  containerClassName?: string
+  disabled?: boolean
+}
+
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+}
+
+export function SearchSelect({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder = 'Selecione…',
+  searchPlaceholder = 'Pesquisar pelo nome…',
+  emptyMessage = 'Nenhum resultado',
+  required,
+  hint,
+  containerClassName,
+  disabled,
+}: SearchSelectProps) {
+  const reactId = useId()
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [highlight, setHighlight] = useState(0)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selected = useMemo(() => options.find((o) => o.value === value) ?? null, [options, value])
+
+  const filtered = useMemo(() => {
+    const q = normalize(query.trim())
+    if (!q) return options
+    return options.filter(
+      (o) => normalize(o.label).includes(q) || (o.subtitle ? normalize(o.subtitle).includes(q) : false),
+    )
+  }, [options, query])
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!wrapperRef.current) return
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  useEffect(() => {
+    if (open) {
+      setHighlight(0)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    } else {
+      setQuery('')
+    }
+  }, [open])
+
+  const select = (opt: SearchSelectOption) => {
+    if (opt.disabled) return
+    onChange(opt.value)
+    setOpen(false)
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlight((h) => Math.max(h - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const target = filtered[highlight]
+      if (target) select(target)
+    }
+  }
+
+  return (
+    <FieldShell label={label} hint={hint} required={required} className={containerClassName} htmlFor={`${reactId}-trigger`}>
+      <div ref={wrapperRef} className="relative">
+        <button
+          id={`${reactId}-trigger`}
+          type="button"
+          disabled={disabled}
+          onClick={() => !disabled && setOpen((o) => !o)}
+          className={cn(
+            'group flex items-center gap-2 w-full px-4 h-12 rounded-2xl bg-[#0c0d10] border text-[14px] transition-colors',
+            'focus:outline-none focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/15',
+            open ? 'border-cyan-400/60' : 'border-white/[0.05] hover:border-white/[0.12]',
+            disabled && 'opacity-50 cursor-not-allowed',
+          )}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <Search className="h-4 w-4 text-white/45 shrink-0" />
+          {selected ? (
+            <span className="flex-1 text-left truncate text-white">
+              {selected.label}
+              {selected.subtitle && (
+                <span className="text-white/45 ml-2 text-[12px]">· {selected.subtitle}</span>
+              )}
+            </span>
+          ) : (
+            <span className="flex-1 text-left text-white/40">{placeholder}</span>
+          )}
+          {selected && !disabled && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Limpar seleção"
+              onClick={(e) => {
+                e.stopPropagation()
+                onChange('')
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onChange('')
+                }
+              }}
+              className="grid place-items-center h-6 w-6 rounded-full text-white/45 hover:text-white hover:bg-white/[0.06]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </span>
+          )}
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-white/45 shrink-0 transition-transform',
+              open && 'rotate-180',
+            )}
+          />
+        </button>
+
+        {open && (
+          <div className="absolute z-30 mt-2 w-full rounded-2xl bg-[#0c0d10] border border-white/[0.08] shadow-2xl overflow-hidden">
+            <div className="flex items-center gap-2 px-3 h-11 border-b border-white/[0.05]">
+              <Search className="h-4 w-4 text-white/45 shrink-0" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setHighlight(0)
+                }}
+                onKeyDown={onKeyDown}
+                placeholder={searchPlaceholder}
+                className="flex-1 h-full bg-transparent outline-none text-[14px] text-white placeholder:text-white/35"
+              />
+              <span className="text-[11px] tabular-nums text-white/45 shrink-0">
+                {filtered.length}/{options.length}
+              </span>
+            </div>
+            <ul role="listbox" className="max-h-72 overflow-auto py-1">
+              {filtered.length === 0 ? (
+                <li className="px-4 py-3 text-[13px] text-white/45">{emptyMessage}</li>
+              ) : (
+                filtered.map((o, i) => {
+                  const isSelected = o.value === value
+                  const isHighlight = i === highlight
+                  return (
+                    <li
+                      key={o.value}
+                      role="option"
+                      aria-selected={isSelected}
+                      aria-disabled={o.disabled}
+                      onMouseEnter={() => setHighlight(i)}
+                      onClick={() => select(o)}
+                      className={cn(
+                        'flex items-center gap-2 px-4 py-2.5 text-[13px] cursor-pointer transition-colors',
+                        o.disabled
+                          ? 'text-white/30 cursor-not-allowed'
+                          : isHighlight
+                            ? 'bg-cyan-400/[0.08] text-white'
+                            : 'text-white/85 hover:bg-white/[0.04]',
+                      )}
+                    >
+                      <span className="flex-1 min-w-0 truncate">
+                        {o.label}
+                        {o.subtitle && (
+                          <span className="text-white/45 ml-2 text-[12px]">· {o.subtitle}</span>
+                        )}
+                      </span>
+                      {isSelected && <Check className="h-4 w-4 text-cyan-300 shrink-0" />}
+                    </li>
+                  )
+                })
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+    </FieldShell>
+  )
+}
 
 interface TextareaInputProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label: string

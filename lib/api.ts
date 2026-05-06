@@ -344,6 +344,7 @@ export interface CreateLeadPayload {
   dataAgendamento?: string
   motivoNaoAgendamento?: string
   nomeResponsavel: string
+  createdAt?: string
 }
 
 export type UpdateLeadPayload = Partial<CreateLeadPayload>

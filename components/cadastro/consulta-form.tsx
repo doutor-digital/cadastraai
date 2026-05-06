@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ClipboardPlus, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
-import { TextInput, SelectInput, ToggleSwitch } from './form-fields'
+import { TextInput, SelectInput, ToggleSwitch, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import { addConsulta, updateConsulta, useCadastroStore } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
@@ -225,22 +225,23 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
         {selectedLead ? (
           <LeadCard lead={selectedLead} />
         ) : (
-          <SelectInput
+          <SearchSelect
             label="Lead"
             value={data.leadId}
-            onChange={(e) => set('leadId', e.target.value)}
+            onChange={(v) => set('leadId', v)}
             options={availableLeads.map((l) => {
               const jaTem = usedLeadIds.has(l.id) && l.id !== editing?.leadId
-              const base = `${l.nome} — ${l.telefone}`
               return {
                 value: l.id,
-                label: jaTem ? `${base} · já tem consulta` : base,
+                label: jaTem ? `${l.nome} · já tem consulta` : l.nome,
+                subtitle: l.telefone,
                 disabled: jaTem,
               }
             })}
             placeholder="Selecione um lead…"
+            searchPlaceholder="Pesquisar lead pelo nome ou telefone…"
             required
-            hint="Todos os leads aparecem; os marcados como 'já tem consulta' ficam desabilitados."
+            hint="Digite parte do nome do lead. Os marcados como 'já tem consulta' ficam desabilitados."
           />
         )}
 

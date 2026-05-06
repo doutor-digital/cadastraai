@@ -43,6 +43,7 @@ const fields: FieldDef[] = [
   { key: 'dataAgendamento',      label: 'Data do agendamento',   required: false, aliases: ['dataagendamento', 'data_agendamento', 'datadoagendamento', 'data_do_agendamento'], hint: 'YYYY-MM-DDTHH:mm ou DD/MM/YYYY' },
   { key: 'motivoNaoAgendamento', label: 'Motivo não agendamento',required: false, aliases: ['motivonaoagendamento', 'motivo_nao_agendamento', 'motivo', 'motivoparanaoagendamento', 'motivo_para_nao_agendamento'] },
   { key: 'nomeResponsavel',      label: 'Responsável',           required: true,  aliases: ['nomeresponsavel', 'responsavel', 'responsável', 'nome_responsavel'] },
+  { key: 'createdAt',            label: 'Data de cadastro',      required: false, aliases: ['dataorigem', 'data_origem', 'datacadastro', 'data_cadastro', 'datacriacao', 'data_criacao', 'criadoem', 'criado_em', 'data'], hint: 'Coluna "Data Origem" da planilha. DD/MM/AAAA ou DD/MM/AAAA HH:MM:SS.' },
 ]
 
 function normalizeKey(s: string): string {
@@ -55,10 +56,18 @@ function normalizeKey(s: string): string {
 
 function autoMap(headers: string[]): Record<string, string> {
   const mapping: Record<string, string> = {}
+  const usedHeaders = new Set<string>()
+  const normalizedHeaders = headers.map((h) => ({ raw: h, norm: normalizeKey(h) }))
   for (const f of fields) {
     const candidates = [normalizeKey(f.key), normalizeKey(f.label), ...f.aliases.map(normalizeKey)]
-    const found = headers.find((h) => candidates.includes(normalizeKey(h)))
-    if (found) mapping[f.key] = found
+    for (const c of candidates) {
+      const match = normalizedHeaders.find((h) => h.norm === c && !usedHeaders.has(h.raw))
+      if (match) {
+        mapping[f.key] = match.raw
+        usedHeaders.add(match.raw)
+        break
+      }
+    }
   }
   return mapping
 }
@@ -75,13 +84,18 @@ function parseDateValue(value: string): string | undefined {
   if (!value) return undefined
   const v = value.trim()
   if (!v) return undefined
-  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[ T](\d{1,2}):(\d{2}))?$/)
+  // DD/MM/YYYY [HH:MM[:SS]] em horário local do navegador → ISO UTC com Z.
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
   if (m) {
-    const [, d, mo, y, hh = '00', mm = '00'] = m
-    const yyyy = y.length === 2 ? `20${y}` : y
-    return `${yyyy}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}T${hh.padStart(2, '0')}:${mm}`
+    const [, d, mo, y, hh = '0', mm = '0', ss = '0'] = m
+    const yyyy = y.length === 2 ? Number(`20${y}`) : Number(y)
+    const dt = new Date(yyyy, Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss))
+    if (!isNaN(dt.getTime())) return dt.toISOString()
   }
-  return v
+  // Fallback: tenta o construtor padrão (ISO etc).
+  const fallback = new Date(v)
+  if (!isNaN(fallback.getTime())) return fallback.toISOString()
+  return undefined
 }
 
 function pickFromList(value: string, list: string[]): string | null {
@@ -138,6 +152,8 @@ function prepareRows(
         ? (get('motivoNaoAgendamento') || 'Não informado').slice(0, 200)
         : undefined
 
+      const createdAt = parseDateValue(get('createdAt'))
+
       const data: LeadFormData = {
         nome,
         telefone,
@@ -150,6 +166,7 @@ function prepareRows(
         dataAgendamento,
         motivoNaoAgendamento,
         nomeResponsavel: responsavel,
+        createdAt,
       }
 
       return { index: idx, raw, ok: true, data }
@@ -298,6 +315,7 @@ export function ImportView({ onBack }: ImportViewProps) {
         dataAgendamento: r.data.dataAgendamento,
         motivoNaoAgendamento: r.data.motivoNaoAgendamento,
         nomeResponsavel: r.data.nomeResponsavel,
+        createdAt: r.data.createdAt,
       })
     }
 
