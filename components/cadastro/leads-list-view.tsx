@@ -1,12 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Pencil, Trash2, Search, UserPlus, Users } from 'lucide-react'
+import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
+import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users } from 'lucide-react'
 import { deleteLead } from '@/lib/cadastro-store'
 import { useMergedLeads } from '@/lib/leads-merged'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
+
+const PAGE_SIZE = 100
 
 interface LeadsListViewProps {
   onBack: () => void
@@ -19,33 +21,63 @@ function formatPhone(p: string): string {
   return p
 }
 
+const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+})
+
 function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
-  } catch {
-    return ''
-  }
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return dateFormatter.format(d)
+}
+
+interface IndexedLead {
+  lead: Lead
+  search: string
 }
 
 export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsListViewProps) {
   const { leads, loading, error } = useMergedLeads()
   const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
   const [statusFilter, setStatusFilter] = useState<'todos' | 'agendados' | 'nao_agendados'>('todos')
+  const [page, setPage] = useState(0)
+
+  // Índice de busca pré-computado: junta os campos pesquisáveis em um único string lowercase.
+  const indexed = useMemo<IndexedLead[]>(
+    () =>
+      leads.map((l) => ({
+        lead: l,
+        search: `${l.nome} ${l.telefone} ${l.origem} ${l.nomeResponsavel}`.toLowerCase(),
+      })),
+    [leads],
+  )
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return leads.filter((l) => {
-      if (statusFilter === 'agendados' && !l.agendouConsulta) return false
-      if (statusFilter === 'nao_agendados' && l.agendouConsulta) return false
-      if (!q) return true
-      return (
-        l.nome.toLowerCase().includes(q) ||
-        l.telefone.toLowerCase().includes(q) ||
-        l.origem.toLowerCase().includes(q) ||
-        l.nomeResponsavel.toLowerCase().includes(q)
-      )
-    })
-  }, [leads, query, statusFilter])
+    const q = deferredQuery.trim().toLowerCase()
+    const out: Lead[] = []
+    for (const i of indexed) {
+      if (statusFilter === 'agendados' && !i.lead.agendouConsulta) continue
+      if (statusFilter === 'nao_agendados' && i.lead.agendouConsulta) continue
+      if (q && !i.search.includes(q)) continue
+      out.push(i.lead)
+    }
+    return out
+  }, [indexed, deferredQuery, statusFilter])
+
+  // Reset page sempre que filtros mudarem.
+  useEffect(() => {
+    setPage(0)
+  }, [deferredQuery, statusFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages - 1)
+  const pageStart = safePage * PAGE_SIZE
+  const pageEnd = Math.min(pageStart + PAGE_SIZE, filtered.length)
+  const pageRows = useMemo(() => filtered.slice(pageStart, pageEnd), [filtered, pageStart, pageEnd])
 
   const handleDelete = (lead: Lead) => {
     if (!confirm(`Apagar o lead "${lead.nome}"? Esta ação não pode ser desfeita.`)) return
@@ -158,76 +190,115 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
                 </tr>
               </thead>
               <tbody>
-                <AnimatePresence initial={false}>
-                  {filtered.map((l) => (
-                    <motion.tr
-                      key={l.id}
-                      layout
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      onClick={() => onOpen(l)}
-                      className="border-b border-white/[0.04] last:border-b-0 hover:bg-cyan-500/[0.05] transition-colors cursor-pointer group"
-                    >
-                      <td className="px-5 py-3 text-white font-medium">
-                        <span className="group-hover:text-cyan-200 transition-colors">{l.nome}</span>
-                      </td>
-                      <td className="px-5 py-3 text-white/75 tabular-nums">{formatPhone(l.telefone)}</td>
-                      <td className="px-5 py-3 text-white/75">{l.origem}</td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={cn(
-                            'inline-flex px-2 h-5 items-center rounded-md text-[11px] font-semibold',
-                            l.tipo === 'Cadastro'
-                              ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/20'
-                              : 'bg-amber-500/10 text-amber-300 border border-amber-400/20',
-                          )}
-                        >
-                          {l.tipo}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-white/75">{l.nomeResponsavel}</td>
-                      <td className="px-5 py-3 text-white/55">{formatDate(l.createdAt)}</td>
-                      <td className="px-5 py-3">
-                        {l.agendouConsulta ? (
-                          <span className="inline-flex px-2 h-5 items-center rounded-md text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-400/20">
-                            Agendou
-                          </span>
-                        ) : (
-                          <span className="inline-flex px-2 h-5 items-center rounded-md text-[11px] text-white/55 bg-white/[0.04] border border-white/[0.05]">
-                            Não agendou
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        className="px-5 py-3"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => onEdit(l)}
-                            className="h-8 w-8 grid place-items-center rounded-lg text-white/55 hover:text-cyan-300 hover:bg-cyan-500/[0.08] transition-colors"
-                            title="Editar"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(l)}
-                            className="h-8 w-8 grid place-items-center rounded-lg text-white/55 hover:text-rose-300 hover:bg-rose-500/[0.08] transition-colors"
-                            title="Apagar"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </motion.tr>
-                  ))}
-                </AnimatePresence>
+                {pageRows.map((l) => (
+                  <LeadRow
+                    key={l.id}
+                    lead={l}
+                    onOpen={onOpen}
+                    onEdit={onEdit}
+                    onDelete={handleDelete}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      {filtered.length > PAGE_SIZE && (
+        <div className="mt-4 flex items-center justify-between gap-3 px-1">
+          <p className="text-[12px] text-white/55 tabular-nums">
+            Mostrando {pageStart + 1}–{pageEnd} de {filtered.length}
+            {filtered.length !== leads.length && ` (filtrados de ${leads.length})`}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage === 0}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-xl bg-[#15171b] border border-white/[0.05] text-[12px] text-white/70 hover:text-white hover:border-white/[0.12] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Anterior
+            </button>
+            <span className="text-[12px] text-white/55 tabular-nums px-2">
+              {safePage + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={safePage >= totalPages - 1}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-xl bg-[#15171b] border border-white/[0.05] text-[12px] text-white/70 hover:text-white hover:border-white/[0.12] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Próxima
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }
+
+interface LeadRowProps {
+  lead: Lead
+  onOpen: (lead: Lead) => void
+  onEdit: (lead: Lead) => void
+  onDelete: (lead: Lead) => void
+}
+
+const LeadRow = memo(function LeadRow({ lead: l, onOpen, onEdit, onDelete }: LeadRowProps) {
+  return (
+    <tr
+      onClick={() => onOpen(l)}
+      className="border-b border-white/[0.04] last:border-b-0 hover:bg-cyan-500/[0.05] transition-colors cursor-pointer group"
+    >
+      <td className="px-5 py-3 text-white font-medium">
+        <span className="group-hover:text-cyan-200 transition-colors">{l.nome}</span>
+      </td>
+      <td className="px-5 py-3 text-white/75 tabular-nums">{formatPhone(l.telefone)}</td>
+      <td className="px-5 py-3 text-white/75">{l.origem}</td>
+      <td className="px-5 py-3">
+        <span
+          className={cn(
+            'inline-flex px-2 h-5 items-center rounded-md text-[11px] font-semibold',
+            l.tipo === 'Cadastro'
+              ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/20'
+              : 'bg-amber-500/10 text-amber-300 border border-amber-400/20',
+          )}
+        >
+          {l.tipo}
+        </span>
+      </td>
+      <td className="px-5 py-3 text-white/75">{l.nomeResponsavel}</td>
+      <td className="px-5 py-3 text-white/55">{formatDate(l.createdAt)}</td>
+      <td className="px-5 py-3">
+        {l.agendouConsulta ? (
+          <span className="inline-flex px-2 h-5 items-center rounded-md text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-400/20">
+            Agendou
+          </span>
+        ) : (
+          <span className="inline-flex px-2 h-5 items-center rounded-md text-[11px] text-white/55 bg-white/[0.04] border border-white/[0.05]">
+            Não agendou
+          </span>
+        )}
+      </td>
+      <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            onClick={() => onEdit(l)}
+            className="h-8 w-8 grid place-items-center rounded-lg text-white/55 hover:text-cyan-300 hover:bg-cyan-500/[0.08] transition-colors"
+            title="Editar"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => onDelete(l)}
+            className="h-8 w-8 grid place-items-center rounded-lg text-white/55 hover:text-rose-300 hover:bg-rose-500/[0.08] transition-colors"
+            title="Apagar"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+})
