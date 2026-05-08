@@ -5,10 +5,52 @@ import { motion } from 'framer-motion'
 import { UserPlus, CheckCircle2, AlertCircle, Pencil } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, Segmented, ToggleSwitch } from './form-fields'
-import { addLead, updateLead } from '@/lib/cadastro-store'
+import {
+  empresasApi,
+  leadsApi,
+  type CreateLeadPayload,
+  type EmpresaDto,
+  type LeadDetailDto,
+} from '@/lib/api'
 import { useConfig } from '@/lib/config-store'
 import type { Lead, LeadFormData } from '@/types'
 import { MOTIVOS_NAO_AGENDAMENTO } from '@/types'
+
+function leadDetailToLead(d: LeadDetailDto): Lead {
+  return {
+    id: d.id,
+    empresaId: d.empresaId,
+    nome: d.nome,
+    telefone: d.telefone,
+    origem: d.origem,
+    tipo: (d.tipo === 'Resgate' ? 'Resgate' : 'Cadastro') as Lead['tipo'],
+    tipoResgate: d.tipoResgate ?? undefined,
+    interacao: d.interacao,
+    agendouConsulta: d.agendouConsulta,
+    pagamentoAntecipado: d.pagamentoAntecipado,
+    dataAgendamento: d.dataAgendamento ?? undefined,
+    motivoNaoAgendamento: d.motivoNaoAgendamento ?? undefined,
+    nomeResponsavel: d.nomeResponsavel,
+    createdAt: d.createdAt,
+    importado: d.importado,
+  }
+}
+
+function buildPayload(data: LeadFormData): CreateLeadPayload {
+  return {
+    nome: data.nome.trim(),
+    telefone: data.telefone.trim(),
+    origem: data.origem.trim(),
+    tipo: data.tipo,
+    tipoResgate: data.tipo === 'Resgate' ? data.tipoResgate : undefined,
+    interacao: data.interacao,
+    agendouConsulta: data.agendouConsulta,
+    pagamentoAntecipado: data.pagamentoAntecipado,
+    dataAgendamento: data.agendouConsulta ? data.dataAgendamento || undefined : undefined,
+    motivoNaoAgendamento: !data.agendouConsulta ? data.motivoNaoAgendamento?.trim() || undefined : undefined,
+    nomeResponsavel: data.nomeResponsavel,
+  }
+}
 
 interface LeadFormProps {
   onBack: () => void
@@ -52,39 +94,81 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
     editing ? fromLead(editing) : { ...initialState, nomeResponsavel: '' },
   )
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState<string>(editing?.empresaId ?? '')
+  const [empresasLoading, setEmpresasLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (editing) setData(fromLead(editing))
   }, [editing])
 
+  // Carrega empresas do usuário logado e seleciona a primeira por padrão
+  // (mesmo padrão usado em LeadsListView/import-view).
+  useEffect(() => {
+    let cancelled = false
+    setEmpresasLoading(true)
+    empresasApi
+      .list()
+      .then((list) => {
+        if (cancelled) return
+        setEmpresas(list)
+        setEmpresaId((cur) => cur || (list[0]?.id ?? ''))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setFeedback({
+          kind: 'error',
+          msg: err instanceof Error ? err.message : 'Erro ao carregar empresas.',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setEmpresasLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const set = <K extends keyof LeadFormData>(key: K, value: LeadFormData[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFeedback(null)
+    if (data.tipo === 'Resgate' && !data.tipoResgate) {
+      setFeedback({ kind: 'error', msg: 'Selecione o tipo de resgate.' })
+      return
+    }
+    if (data.agendouConsulta && !data.dataAgendamento) {
+      setFeedback({ kind: 'error', msg: 'Informe a data do agendamento.' })
+      return
+    }
+    if (!data.agendouConsulta && !data.motivoNaoAgendamento?.trim()) {
+      setFeedback({ kind: 'error', msg: 'Informe o motivo de não ter agendado.' })
+      return
+    }
+    if (!data.nomeResponsavel) {
+      setFeedback({ kind: 'error', msg: 'Selecione o responsável.' })
+      return
+    }
+    if (!editing && !empresaId) {
+      setFeedback({
+        kind: 'error',
+        msg: empresasLoading
+          ? 'Carregando empresas, aguarde…'
+          : 'Nenhuma empresa disponível para receber o cadastro.',
+      })
+      return
+    }
+
+    setSubmitting(true)
     try {
-      if (data.tipo === 'Resgate' && !data.tipoResgate) {
-        setFeedback({ kind: 'error', msg: 'Selecione o tipo de resgate.' })
-        return
-      }
-      if (data.agendouConsulta && !data.dataAgendamento) {
-        setFeedback({ kind: 'error', msg: 'Informe a data do agendamento.' })
-        return
-      }
-      if (!data.agendouConsulta && !data.motivoNaoAgendamento?.trim()) {
-        setFeedback({ kind: 'error', msg: 'Informe o motivo de não ter agendado.' })
-        return
-      }
-      if (!data.nomeResponsavel) {
-        setFeedback({ kind: 'error', msg: 'Selecione o responsável.' })
-        return
-      }
-      const lead = editing ? updateLead(editing.id, data) : addLead(data)
-      if (!lead) {
-        setFeedback({ kind: 'error', msg: 'Não foi possível salvar o lead.' })
-        return
-      }
+      const payload = buildPayload(data)
+      const dto = editing
+        ? await leadsApi.update(editing.id, payload)
+        : await leadsApi.create(empresaId, payload)
+      const lead = leadDetailToLead(dto)
       setFeedback({
         kind: 'success',
         msg: editing
@@ -94,7 +178,12 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
       if (!editing) setData({ ...initialState, nomeResponsavel: '' })
       onSaved?.(lead)
     } catch (err) {
-      setFeedback({ kind: 'error', msg: err instanceof Error ? err.message : 'Erro inesperado.' })
+      setFeedback({
+        kind: 'error',
+        msg: err instanceof Error ? err.message : 'Não foi possível salvar o lead.',
+      })
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -133,6 +222,17 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
   return (
     <CadastroFormShell title={title} description={description} icon={Icon} onBack={onBack} hero={editing ? undefined : manualHero}>
       <form onSubmit={handleSubmit} className="space-y-5">
+        {!editing && empresas.length > 1 && (
+          <SelectInput
+            label="Empresa"
+            value={empresaId}
+            onChange={(e) => setEmpresaId(e.target.value)}
+            options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+            placeholder="Selecione a empresa…"
+            required
+            hint="O lead será cadastrado nesta empresa."
+          />
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <TextInput
             label="Nome"
@@ -274,9 +374,12 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
           </button>
           <button
             type="submit"
-            className="px-5 h-11 rounded-2xl bg-cyan-400 hover:bg-cyan-300 text-slate-900 font-semibold text-sm transition-colors"
+            disabled={submitting}
+            className="px-5 h-11 rounded-2xl bg-cyan-400 hover:bg-cyan-300 disabled:opacity-60 disabled:cursor-not-allowed text-slate-900 font-semibold text-sm transition-colors"
           >
-            {editing ? 'Salvar alterações' : 'Cadastrar Lead'}
+            {submitting
+              ? (editing ? 'Salvando…' : 'Cadastrando…')
+              : (editing ? 'Salvar alterações' : 'Cadastrar Lead')}
           </button>
         </div>
       </form>
