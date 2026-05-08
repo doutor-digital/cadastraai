@@ -13,6 +13,8 @@ import {
   HeartPulse,
   Wallet,
   Building2,
+  ScrollText,
+  Plug2,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -34,6 +36,8 @@ export type DashboardView =
   | 'relatorios'
   | 'config'
   | 'perfil'
+  | 'logs'
+  | 'kommo'
 
 interface SidebarItem {
   id: DashboardView
@@ -227,6 +231,14 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
                   </svg>
                 ),
               },
+            )}
+            {renderItem(
+              { id: 'logs', label: 'Logs / Auditoria', iconUrl: '' },
+              { iconNode: <ScrollText className="h-[18px] w-[18px]" /> },
+            )}
+            {renderItem(
+              { id: 'kommo', label: 'Kommo', iconUrl: '' },
+              { iconNode: <Plug2 className="h-[18px] w-[18px]" /> },
             )}
             {renderItem(
               { id: 'config', label: 'Configurações', iconUrl: '' },

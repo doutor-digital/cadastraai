@@ -15,3 +15,6 @@ node_modules
 .DS_Store
 .env
 /home/joaoof/Downloads/cadastraai/.env
+
+# Kommo integration: local server-side persistence (config + inbox)
+.data/

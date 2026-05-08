@@ -97,8 +97,7 @@ export const MOTIVOS_NAO_AGENDAMENTO: string[] = [
 
 // Lista padrão usada no fluxo local (offline / demo) — espelha o seed do backend.
 export const MOTIVOS_NAO_FECHAMENTO_DEFAULT: { nome: string; cor: CorSemaforo }[] = [
-  { nome: 'Fechou tratamento total', cor: 'verde' },
-  { nome: 'Fechou tratamento parcial', cor: 'verde' },
+  { nome: 'Fechou tratamento (parcial/total)', cor: 'verde' },
   { nome: 'Assinou contrato, sem entrada', cor: 'amarelo' },
   { nome: 'Vai decidir com familiares', cor: 'amarelo' },
   { nome: 'Vai verificar a melhor forma de pagamento', cor: 'amarelo' },

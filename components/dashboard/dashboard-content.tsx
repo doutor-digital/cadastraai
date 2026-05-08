@@ -16,6 +16,8 @@ import { ImportView } from '@/components/cadastro/import-view'
 import { ImportadosView } from '@/components/cadastro/importados-view'
 import { RelatoriosView } from '@/components/cadastro/relatorios-view'
 import { ConfigView } from '@/components/cadastro/config-view'
+import { LogsView } from '@/components/cadastro/logs-view'
+import { KommoView } from '@/components/cadastro/kommo-view'
 import { ProfileView } from '@/components/dashboard/profile-view'
 import { useAuth } from '@/contexts/auth-context'
 import { useCadastroStore } from '@/lib/cadastro-store'
@@ -35,6 +37,8 @@ const validViews: DashboardView[] = [
   'relatorios',
   'config',
   'perfil',
+  'logs',
+  'kommo',
 ]
 
 function isValidView(value: string | null): value is DashboardView {
@@ -256,6 +260,8 @@ export function DashboardContent() {
                     setView('dashboard')
                   }
                 }}
+                onNavigateToConsulta={() => handleNavigate('consulta')}
+                onNavigateToLead={() => handleNavigate('lead')}
               />
             )}
             {view === 'recebimentos' && (
@@ -274,6 +280,8 @@ export function DashboardContent() {
             {view === 'importados' && <ImportadosView onBack={goDashboard} />}
             {view === 'relatorios' && <RelatoriosView onBack={goDashboard} />}
             {view === 'config' && <ConfigView onBack={goDashboard} />}
+            {view === 'logs' && <LogsView onBack={goDashboard} />}
+            {view === 'kommo' && <KommoView onBack={goDashboard} />}
             {view === 'perfil' && <ProfileView onBack={goDashboard} onLogout={handleLogout} />}
           </motion.div>
         </AnimatePresence>

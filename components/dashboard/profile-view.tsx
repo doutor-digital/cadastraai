@@ -69,7 +69,7 @@ export function ProfileView({ onBack, onLogout }: ProfileViewProps) {
       <div className="flex items-center justify-between mb-5">
         <button
           onClick={onBack}
-          className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/[0.05] text-[13px] text-white/70 hover:text-white hover:border-white/[0.12] transition-colors"
+          className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/5 text-[13px] text-white/70 hover:text-white hover:border-white/12 transition-colors"
         >
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
           Voltar para Dashboard
@@ -94,13 +94,13 @@ export function ProfileView({ onBack, onLogout }: ProfileViewProps) {
 
       {/* Avatar sobreposto */}
       <div className="relative -mt-12 px-7 mb-6">
-        <div className="rounded-2xl bg-[#0c0d10] inline-block p-1.5 ring-2 ring-white/[0.08]">
+        <div className="rounded-2xl bg-[#0c0d10] inline-block p-1.5 ring-2 ring-white/8">
           <AvatarCircle src={user?.avatarUrl} name={user?.name} email={user?.email} size={96} />
         </div>
       </div>
 
       {/* Detalhes */}
-      <div className="rounded-3xl border border-white/[0.05] bg-[#15171b] p-5 space-y-3">
+      <div className="rounded-3xl border border-white/5 bg-[#15171b] p-5 space-y-3">
         <DetailRow
           icon={<Mail className="h-4 w-4 text-cyan-400" />}
           label="E-mail"
@@ -175,7 +175,7 @@ export function ProfileView({ onBack, onLogout }: ProfileViewProps) {
       </div>
 
       {/* Ação destrutiva */}
-      <div className="mt-5 rounded-3xl border border-rose-400/15 bg-rose-500/[0.04] p-5">
+      <div className="mt-5 rounded-3xl border border-rose-400/15 bg-rose-500/4 p-5">
         <p className="text-[12px] uppercase tracking-wider text-rose-200/80 font-semibold mb-1">
           Sessão
         </p>
@@ -184,7 +184,7 @@ export function ProfileView({ onBack, onLogout }: ProfileViewProps) {
         </p>
         <button
           onClick={onLogout}
-          className="inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-rose-500/[0.10] border border-rose-400/30 text-rose-300 text-[13px] font-semibold hover:bg-rose-500/[0.18] transition-colors"
+          className="inline-flex items-center justify-center gap-2 h-11 px-5 rounded-xl bg-rose-500/10 border border-rose-400/30 text-rose-300 text-[13px] font-semibold hover:bg-rose-500/18 transition-colors"
         >
           <LogOut className="h-4 w-4" />
           Sair da conta
@@ -205,7 +205,7 @@ interface DetailRowProps {
 
 function DetailRow({ icon, label, value, actionIcon, actionTitle, onAction }: DetailRowProps) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-white/[0.05] bg-[#0c0d10] px-3 py-2.5">
+    <div className="flex items-start gap-3 rounded-2xl border border-white/5 bg-[#0c0d10] px-3 py-2.5">
       <div className="h-8 w-8 grid place-items-center rounded-lg bg-cyan-500/10 border border-cyan-400/20 shrink-0">
         {icon}
       </div>
@@ -219,7 +219,7 @@ function DetailRow({ icon, label, value, actionIcon, actionTitle, onAction }: De
           title={actionTitle}
           className={cn(
             'h-8 w-8 grid place-items-center rounded-lg shrink-0 transition-colors',
-            'hover:bg-white/[0.06]',
+            'hover:bg-white/6',
           )}
         >
           {actionIcon}

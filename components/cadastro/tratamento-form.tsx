@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { HeartPulse, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet } from 'lucide-react'
+import { HeartPulse, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone, UserCog, Wallet, ArrowRight, ClipboardPlus, UserPlus } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
@@ -25,6 +25,8 @@ interface TratamentoFormProps {
   onSaved?: (tratamento: Tratamento) => void
   prefilledConsultaId?: string
   editing?: Tratamento
+  onNavigateToConsulta?: () => void
+  onNavigateToLead?: () => void
 }
 
 interface FormState {
@@ -88,7 +90,14 @@ function tratamentoDtoToLocal(t: TratamentoDto): Tratamento {
   }
 }
 
-export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }: TratamentoFormProps) {
+export function TratamentoForm({
+  onBack,
+  onSaved,
+  prefilledConsultaId,
+  editing,
+  onNavigateToConsulta,
+  onNavigateToLead,
+}: TratamentoFormProps) {
   const config = useConfig()
   const planoOptions = config.planosTratamento.map((p) => ({ value: p, label: p }))
 
@@ -290,6 +299,13 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
   }
 
   if (!editing && consultaOptions.length === 0 && !leadsLoading) {
+    const totalLeads = leads.length
+    const leadsComConsulta = leads.filter((l) => l.temConsulta).length
+    const consultasLivres = leads.filter((l) => l.temConsulta && !l.temTratamento).length
+    const semNenhumLead = totalLeads === 0
+    const semConsulta = totalLeads > 0 && leadsComConsulta === 0
+    const todasOcupadas = leadsComConsulta > 0 && consultasLivres === 0
+
     return (
       <CadastroFormShell
         title="Cadastrar Tratamento"
@@ -298,11 +314,93 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
         accent="#34d399"
         onBack={onBack}
       >
-        <div className="text-center py-12 px-4 rounded-xl border border-dashed border-white/10">
-          <p className="text-base text-foreground font-medium mb-2">Nenhuma consulta disponível</p>
-          <p className="text-sm text-muted-foreground">
-            Cadastre uma consulta primeiro ou selecione outra que ainda não tenha tratamento vinculado.
-          </p>
+        <div className="space-y-5">
+          {/* Diagnóstico do estado atual */}
+          <div className="rounded-2xl border border-amber-400/30 bg-amber-500/[0.06] px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-amber-300 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-200 mb-1">
+                  {semNenhumLead && 'Nenhum lead cadastrado ainda'}
+                  {semConsulta && 'Você tem leads, mas nenhum com consulta cadastrada'}
+                  {todasOcupadas && 'Todas as consultas já têm tratamento vinculado'}
+                </p>
+                <p className="text-[13px] text-amber-100/85 leading-relaxed">
+                  Tratamento é a <strong>etapa 3</strong> do fluxo. Você precisa ter um lead com
+                  uma consulta cadastrada que ainda não tenha tratamento.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Indicador de progresso por etapa */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <StepCard
+              num={1}
+              label="Lead"
+              count={totalLeads}
+              done={totalLeads > 0}
+              hint={totalLeads > 0 ? `${totalLeads} cadastrado${totalLeads === 1 ? '' : 's'}` : 'Nenhum'}
+            />
+            <StepCard
+              num={2}
+              label="Consulta"
+              count={leadsComConsulta}
+              done={leadsComConsulta > 0}
+              hint={
+                leadsComConsulta > 0
+                  ? `${leadsComConsulta} de ${totalLeads}`
+                  : 'Aguardando'
+              }
+            />
+            <StepCard
+              num={3}
+              label="Tratamento"
+              count={0}
+              done={false}
+              hint={consultasLivres > 0 ? 'Pronto para criar' : 'Bloqueado'}
+              active
+            />
+          </div>
+
+          {/* Próxima ação */}
+          <div className="rounded-2xl border border-white/10 bg-[#15171b] p-5">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-white/45 font-semibold mb-3">
+              Próximo passo
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              {semNenhumLead && onNavigateToLead && (
+                <button
+                  onClick={onNavigateToLead}
+                  className="flex-1 inline-flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-[#0d0f14] font-semibold text-sm transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <UserPlus className="h-4 w-4" />
+                    Cadastrar primeiro lead
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+              {(semConsulta || todasOcupadas) && onNavigateToConsulta && (
+                <button
+                  onClick={onNavigateToConsulta}
+                  className="flex-1 inline-flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-[#0d0f14] font-semibold text-sm transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <ClipboardPlus className="h-4 w-4" />
+                    {semConsulta ? 'Cadastrar consulta agora' : 'Cadastrar nova consulta'}
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={onBack}
+                className="px-4 py-3 rounded-xl border border-white/10 bg-white/[0.03] text-sm text-white/70 hover:text-white hover:border-white/20 transition-colors"
+              >
+                Voltar para Dashboard
+              </button>
+            </div>
+          </div>
         </div>
       </CadastroFormShell>
     )
@@ -484,5 +582,53 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
         </div>
       </form>
     </CadastroFormShell>
+  )
+}
+
+function StepCard({
+  num,
+  label,
+  count,
+  done,
+  hint,
+  active,
+}: {
+  num: number
+  label: string
+  count: number
+  done: boolean
+  hint: string
+  active?: boolean
+}) {
+  return (
+    <div
+      className={
+        'rounded-2xl border px-4 py-3 ' +
+        (done
+          ? 'border-emerald-400/30 bg-emerald-500/[0.06]'
+          : active
+            ? 'border-cyan-400/30 bg-cyan-500/[0.06]'
+            : 'border-white/10 bg-white/[0.02]')
+      }
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span
+          className={
+            'h-6 w-6 grid place-items-center rounded-full text-[11px] font-bold ' +
+            (done
+              ? 'bg-emerald-400 text-emerald-950'
+              : active
+                ? 'bg-cyan-400 text-cyan-950'
+                : 'bg-white/10 text-white/55')
+          }
+        >
+          {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : num}
+        </span>
+        <p className={'text-[13px] font-semibold ' + (done ? 'text-emerald-200' : active ? 'text-cyan-200' : 'text-white/65')}>
+          {label}
+        </p>
+      </div>
+      <p className="text-[11px] text-white/55 ml-8">{hint}</p>
+    </div>
   )
 }
