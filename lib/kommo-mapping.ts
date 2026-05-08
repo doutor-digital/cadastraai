@@ -7,8 +7,46 @@
 //
 // Pure: no I/O, safe to run in client and server.
 import type { CreateLeadPayload } from '@/lib/api'
-import type { KommoLead, KommoContact, KommoCustomFieldValue } from '@/lib/kommo-client.server'
 import { MOTIVOS_NAO_AGENDAMENTO } from '@/types'
+
+// Subset of Kommo's lead/contact shape that we actually inspect — declared here to keep
+// kommo-mapping.ts free of server-only dependencies. Fields são todos opcionais porque
+// a Kommo retorna o que o usuário configurou.
+export interface KommoCustomFieldValue {
+  field_id?: number
+  field_name?: string
+  field_code?: string
+  field_type?: string
+  values?: { value?: unknown; enum_id?: number; enum_code?: string }[]
+}
+
+export interface KommoLead {
+  id: number
+  name?: string
+  price?: number
+  responsible_user_id?: number
+  status_id?: number
+  pipeline_id?: number
+  created_at?: number
+  updated_at?: number
+  custom_fields_values?: KommoCustomFieldValue[]
+  _embedded?: {
+    contacts?: { id: number; name?: string; first_name?: string; last_name?: string }[]
+    tags?: { id: number; name: string }[]
+  }
+}
+
+export interface KommoContact {
+  id: number
+  name?: string
+  first_name?: string
+  last_name?: string
+  responsible_user_id?: number
+  custom_fields_values?: KommoCustomFieldValue[]
+  _embedded?: {
+    leads?: { id: number }[]
+  }
+}
 
 // Each "target" is a field in our system that we want to fill.
 export type TargetField =

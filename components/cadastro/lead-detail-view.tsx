@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft,
@@ -15,8 +15,16 @@ import {
   XCircle,
   User as UserIcon,
   Sparkles,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react'
-import { useCadastroStore, deleteLead } from '@/lib/cadastro-store'
+import {
+  leadsApi,
+  type ConsultaDto,
+  type LeadDetailDto,
+  type RecebimentoDto,
+  type TratamentoDto,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Consulta, Lead, Recebimento, Tratamento } from '@/types'
 
@@ -101,6 +109,70 @@ function YesNo({ value }: { value: boolean }) {
   )
 }
 
+// ----- DTO → tipos locais -----
+
+function recebimentoFromDto(r: RecebimentoDto): Recebimento {
+  return {
+    id: r.id,
+    valorRecebimento: r.valorRecebimento,
+    formaPagamento: r.formaPagamento,
+    dataRecebimento: r.dataRecebimento,
+    consultaId: r.consultaId ?? undefined,
+    tratamentoId: r.tratamentoId ?? undefined,
+  }
+}
+
+function tratamentoFromDto(t: TratamentoDto): Tratamento {
+  return {
+    id: t.id,
+    consultaId: t.consultaId,
+    planoTratamento: t.planoTratamento,
+    planoPilates: t.planoPilates ?? undefined,
+    musculacao: t.musculacao ?? undefined,
+    procedimento: t.procedimento ?? undefined,
+    valorPlano: t.valorPlano,
+    recebimentos: (t.recebimentos ?? []).map(recebimentoFromDto),
+    createdAt: t.createdAt,
+  }
+}
+
+function consultaFromDto(c: ConsultaDto): Consulta {
+  return {
+    id: c.id,
+    leadId: c.leadId,
+    valorConsulta: c.valorConsulta,
+    pagamentoAntecipado: c.pagamentoAntecipado,
+    tratamentoIndicado: c.tratamentoIndicado,
+    orcamento: c.orcamento,
+    compareceu: c.compareceu,
+    fechouTratamento: c.fechouTratamento,
+    motivoNaoFechamento: c.motivoNaoFechamento ?? undefined,
+    createdAt: c.createdAt,
+    recebimentos: (c.recebimentos ?? []).map(recebimentoFromDto),
+    tratamento: c.tratamento ? tratamentoFromDto(c.tratamento) : undefined,
+  }
+}
+
+function leadFromDto(d: LeadDetailDto): Lead {
+  return {
+    id: d.id,
+    empresaId: d.empresaId,
+    nome: d.nome,
+    telefone: d.telefone,
+    origem: d.origem,
+    tipo: (d.tipo === 'Resgate' ? 'Resgate' : 'Cadastro') as Lead['tipo'],
+    tipoResgate: d.tipoResgate ?? undefined,
+    interacao: d.interacao,
+    agendouConsulta: d.agendouConsulta,
+    pagamentoAntecipado: d.pagamentoAntecipado,
+    dataAgendamento: d.dataAgendamento ?? undefined,
+    motivoNaoAgendamento: d.motivoNaoAgendamento ?? undefined,
+    nomeResponsavel: d.nomeResponsavel,
+    createdAt: d.createdAt,
+    importado: d.importado,
+  }
+}
+
 export function LeadDetailView({
   leadId,
   onBack,
@@ -109,16 +181,42 @@ export function LeadDetailView({
   onEditTratamento,
   onDeleted,
 }: LeadDetailViewProps) {
-  const store = useCadastroStore()
+  const [detail, setDetail] = useState<LeadDetailDto | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [refreshTick, setRefreshTick] = useState(0)
 
-  const lead = useMemo(() => store.leads.find((l) => l.id === leadId), [store.leads, leadId])
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    leadsApi
+      .get(leadId)
+      .then((d) => {
+        if (cancelled) return
+        setDetail(d)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Erro ao carregar lead.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [leadId, refreshTick])
+
+  const lead = useMemo(() => (detail ? leadFromDto(detail) : null), [detail])
   const consulta = useMemo(
-    () => store.consultas.find((c) => c.leadId === leadId),
-    [store.consultas, leadId],
+    () => (detail?.consulta ? consultaFromDto(detail.consulta) : undefined),
+    [detail],
   )
   const tratamento = useMemo(
-    () => (consulta ? store.tratamentos.find((t) => t.consultaId === consulta.id) : undefined),
-    [store.tratamentos, consulta],
+    () => (detail?.consulta?.tratamento ? tratamentoFromDto(detail.consulta.tratamento) : undefined),
+    [detail],
   )
 
   const allRecebimentos: Recebimento[] = useMemo(() => {
@@ -130,7 +228,45 @@ export function LeadDetailView({
 
   const totalRecebido = allRecebimentos.reduce((sum, r) => sum + r.valorRecebimento, 0)
 
-  if (!lead) {
+  if (loading && !detail) {
+    return (
+      <motion.div
+        className="px-8 py-8 max-w-5xl mx-auto"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <div className="flex items-center justify-between mb-5">
+          <button
+            onClick={onBack}
+            className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/5 text-[13px] text-white/70 hover:text-white transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Voltar
+          </button>
+        </div>
+        <div className="rounded-3xl bg-[#15171b] border border-white/5 px-6 py-12 animate-pulse">
+          <div className="flex items-center gap-5 mb-6">
+            <div className="h-20 w-20 rounded-2xl bg-white/5" />
+            <div className="flex-1 space-y-3">
+              <div className="h-3 w-24 bg-white/5 rounded" />
+              <div className="h-7 w-1/2 bg-white/10 rounded" />
+              <div className="h-3 w-2/3 bg-white/5 rounded" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="h-2 w-16 bg-white/5 rounded" />
+                <div className="h-4 w-3/4 bg-white/10 rounded" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
+
+  if (error || !lead) {
     return (
       <motion.div
         className="px-8 py-8 max-w-3xl mx-auto"
@@ -140,24 +276,42 @@ export function LeadDetailView({
         <div className="flex items-center justify-between mb-5">
           <button
             onClick={onBack}
-            className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/[0.05] text-[13px] text-white/70 hover:text-white transition-colors"
+            className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/5 text-[13px] text-white/70 hover:text-white transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
             Voltar
           </button>
+          <button
+            onClick={() => setRefreshTick((t) => t + 1)}
+            className="inline-flex items-center gap-2 px-3 h-9 rounded-xl border border-white/10 bg-white/[0.03] text-[13px] text-white/70 hover:text-white transition-colors"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Tentar de novo
+          </button>
         </div>
-        <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] px-6 py-16 text-center">
-          <p className="text-base text-white/85 font-medium mb-1">Lead não encontrado</p>
-          <p className="text-sm text-white/55">Pode ter sido removido recentemente.</p>
+        <div className="rounded-3xl bg-[#15171b] border border-white/5 px-6 py-16 text-center">
+          <AlertCircle className="h-7 w-7 text-amber-300 mx-auto mb-3" />
+          <p className="text-base text-white/85 font-medium mb-1">
+            {error ? 'Não foi possível carregar este lead' : 'Lead não encontrado'}
+          </p>
+          <p className="text-sm text-white/55">
+            {error ?? 'Pode ter sido removido recentemente.'}
+          </p>
         </div>
       </motion.div>
     )
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!confirm(`Apagar o lead "${lead.nome}"? Esta ação não pode ser desfeita.`)) return
-    deleteLead(lead.id)
-    onDeleted()
+    setDeleting(true)
+    try {
+      await leadsApi.delete(lead.id)
+      onDeleted()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao apagar lead.')
+      setDeleting(false)
+    }
   }
 
   const initials = lead.nome
@@ -179,12 +333,20 @@ export function LeadDetailView({
       <div className="flex items-center justify-between mb-5">
         <button
           onClick={onBack}
-          className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/[0.05] text-[13px] text-white/70 hover:text-white hover:border-white/[0.12] transition-colors"
+          className="group inline-flex items-center gap-2 px-3 h-9 rounded-xl bg-[#15171b] border border-white/5 text-[13px] text-white/70 hover:text-white hover:border-white/12 transition-colors"
         >
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
           Voltar para Leads
         </button>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setRefreshTick((t) => t + 1)}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-white/10 bg-white/[0.03] text-[13px] text-white/70 hover:text-white hover:border-white/20 disabled:opacity-50 transition-colors"
+            title="Recarregar"
+          >
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+          </button>
           <button
             onClick={() => onEdit(lead)}
             className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-900 font-semibold text-[13px] transition-colors"
@@ -194,10 +356,11 @@ export function LeadDetailView({
           </button>
           <button
             onClick={handleDelete}
-            className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-rose-500/[0.08] border border-rose-400/30 text-rose-300 hover:bg-rose-500/15 text-[13px] transition-colors"
+            disabled={deleting}
+            className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-rose-500/[0.08] border border-rose-400/30 text-rose-300 hover:bg-rose-500/15 text-[13px] disabled:opacity-50 transition-colors"
           >
             <Trash2 className="h-4 w-4" />
-            Apagar
+            {deleting ? 'Apagando…' : 'Apagar'}
           </button>
         </div>
       </div>
@@ -208,7 +371,8 @@ export function LeadDetailView({
         style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #0e7490 60%, #075985 100%)' }}
       >
         <div className="flex items-start gap-5">
-          <div className="h-20 w-20 rounded-2xl grid place-items-center text-white text-[26px] font-bold shrink-0"
+          <div
+            className="h-20 w-20 rounded-2xl grid place-items-center text-white text-[26px] font-bold shrink-0"
             style={{
               background: 'rgba(8, 47, 73, 0.55)',
               boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.18)',
@@ -261,7 +425,7 @@ export function LeadDetailView({
       </div>
 
       {/* Cadastro details */}
-      <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 mb-4">
+      <div className="rounded-3xl bg-[#15171b] border border-white/5 p-6 mb-4">
         <h3 className="text-[14px] font-semibold mb-5 flex items-center gap-2">
           <UserIcon className="h-4 w-4 text-cyan-400" />
           Informações do cadastro
@@ -279,6 +443,9 @@ export function LeadDetailView({
           <InfoRow label="Agendou consulta?" value={<YesNo value={lead.agendouConsulta} />} />
           <InfoRow label="Pagamento antecipado?" value={<YesNo value={lead.pagamentoAntecipado} />} />
           <InfoRow label="Cadastrado em" value={formatDateTime(lead.createdAt)} />
+          {detail?.createdByName && (
+            <InfoRow label="Cadastrado por" value={detail.createdByName} />
+          )}
           {lead.agendouConsulta && lead.dataAgendamento && (
             <InfoRow label="Data do agendamento" value={formatDateTime(lead.dataAgendamento)} span={2} />
           )}
@@ -318,7 +485,7 @@ export function LeadDetailView({
 
       {/* Consulta */}
       {consulta && (
-        <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 mb-4">
+        <div className="rounded-3xl bg-[#15171b] border border-white/5 p-6 mb-4">
           <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
             <h3 className="text-[14px] font-semibold flex items-center gap-2">
               <ClipboardCheck className="h-4 w-4 text-cyan-400" />
@@ -343,10 +510,14 @@ export function LeadDetailView({
             <InfoRow label="Valor da consulta" value={brl(consulta.valorConsulta)} />
             <InfoRow label="Orçamento" value={brl(consulta.orcamento)} />
             <InfoRow label="Pagamento antecipado?" value={<YesNo value={consulta.pagamentoAntecipado} />} />
+            <InfoRow label="Compareceu?" value={<YesNo value={consulta.compareceu} />} />
             <InfoRow label="Fechou tratamento?" value={<YesNo value={consulta.fechouTratamento} />} />
             <InfoRow label="Tratamento indicado" value={consulta.tratamentoIndicado || '—'} span={2} />
             {!consulta.fechouTratamento && consulta.motivoNaoFechamento && (
               <InfoRow label="Motivo do não fechamento" value={consulta.motivoNaoFechamento} span={2} />
+            )}
+            {detail?.consulta?.createdByName && (
+              <InfoRow label="Registrada por" value={detail.consulta.createdByName} />
             )}
           </div>
         </div>
@@ -354,7 +525,7 @@ export function LeadDetailView({
 
       {/* Tratamento */}
       {tratamento && (
-        <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 mb-4">
+        <div className="rounded-3xl bg-[#15171b] border border-white/5 p-6 mb-4">
           <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
             <h3 className="text-[14px] font-semibold flex items-center gap-2">
               <HeartPulse className="h-4 w-4 text-cyan-400" />
@@ -381,14 +552,17 @@ export function LeadDetailView({
             {tratamento.planoPilates && <InfoRow label="Pilates" value={tratamento.planoPilates} />}
             {tratamento.musculacao && <InfoRow label="Musculação" value={tratamento.musculacao} />}
             {tratamento.procedimento && <InfoRow label="Procedimento" value={tratamento.procedimento} span={2} />}
+            {detail?.consulta?.tratamento?.createdByName && (
+              <InfoRow label="Registrado por" value={detail.consulta.tratamento.createdByName} />
+            )}
           </div>
         </div>
       )}
 
       {/* Recebimentos */}
       {allRecebimentos.length > 0 && (
-        <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] overflow-hidden">
-          <div className="px-6 h-14 flex items-center justify-between border-b border-white/[0.05]">
+        <div className="rounded-3xl bg-[#15171b] border border-white/5 overflow-hidden">
+          <div className="px-6 h-14 flex items-center justify-between border-b border-white/5">
             <h3 className="text-[14px] font-semibold flex items-center gap-2">
               <Wallet className="h-4 w-4 text-cyan-400" />
               Recebimentos ({allRecebimentos.length})
@@ -400,7 +574,8 @@ export function LeadDetailView({
           <ul>
             {allRecebimentos.map((r, i) => {
               const tone = formaTone[r.formaPagamento] ?? formaTone.default
-              const origem = consulta && consulta.recebimentos.some((rr) => rr.id === r.id) ? 'Consulta' : 'Tratamento'
+              const origem =
+                consulta && consulta.recebimentos.some((rr) => rr.id === r.id) ? 'Consulta' : 'Tratamento'
               return (
                 <li
                   key={r.id}
@@ -450,7 +625,7 @@ function FunnelStep({ icon: Icon, label, done, detail, onClick, actionLabel }: F
         'group rounded-2xl p-4 border text-left w-full transition-colors',
         done
           ? 'border-cyan-400/30 bg-cyan-500/[0.06]'
-          : 'border-white/[0.05] bg-[#15171b]',
+          : 'border-white/5 bg-[#15171b]',
         clickable && 'cursor-pointer hover:border-cyan-300/60 hover:bg-cyan-500/[0.10] focus:outline-none focus:ring-2 focus:ring-cyan-400/40',
         !clickable && 'cursor-default',
       )}

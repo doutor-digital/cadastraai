@@ -26,7 +26,15 @@ import {
   Building2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { empresasApi, leadsApi, type CreateLeadPayload, type EmpresaDto } from '@/lib/api'
+import {
+  buildKommoWebhookUrl,
+  empresasApi,
+  kommoApi,
+  type CreateLeadPayload,
+  type EmpresaDto,
+  type KommoConfigDto,
+  type KommoInboxItemDto,
+} from '@/lib/api'
 import {
   analyzeKommoLead,
   listTargets,
@@ -36,26 +44,6 @@ import {
 
 interface KommoViewProps {
   onBack: () => void
-}
-
-interface PublicConfig {
-  subdomain: string
-  hasToken: boolean
-  tokenSuffix: string
-  webhookSecret: string
-  lastSyncAt: string | null
-}
-
-interface InboxItemDto {
-  id: string
-  kommoLeadId?: number
-  source: 'webhook' | 'sync'
-  receivedAt: string
-  raw: unknown
-  status: 'pending' | 'imported' | 'discarded'
-  importedLeadId?: string
-  empresaId?: string
-  note?: string
 }
 
 type Tab = 'config' | 'inbox' | 'sync'
@@ -76,39 +64,58 @@ function formatDateTime(iso: string): string {
 
 export function KommoView({ onBack }: KommoViewProps) {
   const [tab, setTab] = useState<Tab>('config')
-  const [config, setConfig] = useState<PublicConfig | null>(null)
-  const [configLoading, setConfigLoading] = useState(true)
-  const [inbox, setInbox] = useState<InboxItemDto[]>([])
-  const [inboxLoading, setInboxLoading] = useState(false)
   const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState('')
+  const [config, setConfig] = useState<KommoConfigDto | null>(null)
+  const [configLoading, setConfigLoading] = useState(true)
+  const [inbox, setInbox] = useState<KommoInboxItemDto[]>([])
+  const [inboxLoading, setInboxLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error' | 'info'; msg: string } | null>(null)
 
+  // Empresas
   useEffect(() => {
-    refreshConfig()
-    refreshInbox()
+    let cancelled = false
     empresasApi
       .list()
-      .then(setEmpresas)
+      .then((list) => {
+        if (cancelled) return
+        setEmpresas(list)
+        setEmpresaId((prev) => prev || list[0]?.id || '')
+      })
       .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
+  useEffect(() => {
+    if (!empresaId) return
+    refreshConfig()
+    refreshInbox()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaId])
+
   async function refreshConfig() {
+    if (!empresaId) return
     setConfigLoading(true)
     try {
-      const r = await fetch('/api/kommo/config', { cache: 'no-store' })
-      const j = (await r.json()) as { config: PublicConfig | null }
-      setConfig(j.config)
+      const cfg = await kommoApi.getConfig(empresaId)
+      setConfig(cfg)
+    } catch {
+      setConfig(null)
     } finally {
       setConfigLoading(false)
     }
   }
 
   async function refreshInbox() {
+    if (!empresaId) return
     setInboxLoading(true)
     try {
-      const r = await fetch('/api/kommo/inbox', { cache: 'no-store' })
-      const j = (await r.json()) as { items: InboxItemDto[] }
-      setInbox(j.items)
+      const items = await kommoApi.inbox(empresaId)
+      setInbox(items)
+    } catch {
+      setInbox([])
     } finally {
       setInboxLoading(false)
     }
@@ -129,6 +136,22 @@ export function KommoView({ onBack }: KommoViewProps) {
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
           Voltar para Dashboard
         </button>
+        {empresas.length > 1 && (
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-white/55" />
+            <select
+              value={empresaId}
+              onChange={(e) => setEmpresaId(e.target.value)}
+              className="h-9 px-3 rounded-xl bg-[#15171b] border border-white/10 text-[13px] text-white focus:outline-none focus:border-cyan-400/50"
+            >
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Hero */}
@@ -144,8 +167,8 @@ export function KommoView({ onBack }: KommoViewProps) {
             <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Integração</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-none">Kommo CRM</h1>
             <p className="text-[13px] text-cyan-100/85 mt-2">
-              Receba leads via webhook ou faça sync manual. O sistema detecta os campos
-              automaticamente e mostra o que falta antes de promover para o seu funil.
+              Configurada por empresa, com token criptografado at-rest. Receba leads via webhook ou
+              faça sync manual; o gap-analysis mostra o que falta antes de promover.
             </p>
           </div>
           <ConfigStatusPill loading={configLoading} config={config} />
@@ -170,30 +193,37 @@ export function KommoView({ onBack }: KommoViewProps) {
         </TabButton>
       </div>
 
-      {feedback && (
-        <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />
-      )}
+      {feedback && <FeedbackBanner feedback={feedback} onClose={() => setFeedback(null)} />}
 
-      {tab === 'config' && (
-        <ConfigTab config={config} onSaved={(msg) => { refreshConfig(); setFeedback({ kind: 'success', msg }) }} onError={(msg) => setFeedback({ kind: 'error', msg })} />
-      )}
-
-      {tab === 'sync' && (
+      {!empresaId ? (
+        <div className="rounded-3xl border border-dashed border-white/10 px-6 py-16 text-center">
+          <p className="text-white/55 text-sm">Selecione uma empresa para configurar o Kommo.</p>
+        </div>
+      ) : tab === 'config' ? (
+        <ConfigTab
+          empresaId={empresaId}
+          config={config}
+          onSaved={(msg) => {
+            refreshConfig()
+            setFeedback({ kind: 'success', msg })
+          }}
+          onError={(msg) => setFeedback({ kind: 'error', msg })}
+        />
+      ) : tab === 'sync' ? (
         <SyncTab
-          configured={!!config}
+          empresaId={empresaId}
+          configured={!!config?.hasToken}
           onResult={(res) => {
             setFeedback(res)
             refreshInbox()
             refreshConfig()
           }}
         />
-      )}
-
-      {tab === 'inbox' && (
+      ) : (
         <InboxTab
+          empresaId={empresaId}
           items={inbox}
           loading={inboxLoading}
-          empresas={empresas}
           onRefresh={refreshInbox}
           onFeedback={setFeedback}
         />
@@ -202,7 +232,7 @@ export function KommoView({ onBack }: KommoViewProps) {
   )
 }
 
-function ConfigStatusPill({ loading, config }: { loading: boolean; config: PublicConfig | null }) {
+function ConfigStatusPill({ loading, config }: { loading: boolean; config: KommoConfigDto | null }) {
   if (loading) return null
   if (!config || !config.hasToken) {
     return (
@@ -249,7 +279,7 @@ function FeedbackBanner({
       : feedback.kind === 'error'
         ? 'border-red-400/30 bg-red-500/10 text-red-200'
         : 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200'
-  const Icon = feedback.kind === 'success' ? CheckCircle2 : feedback.kind === 'error' ? AlertCircle : AlertCircle
+  const Icon = feedback.kind === 'success' ? CheckCircle2 : AlertCircle
   return (
     <div className={cn('rounded-2xl border px-4 py-3 mb-5 flex items-start gap-3', palette)}>
       <Icon className="h-5 w-5 shrink-0 mt-0.5" />
@@ -264,11 +294,13 @@ function FeedbackBanner({
 // ----- CONFIG TAB -----
 
 function ConfigTab({
+  empresaId,
   config,
   onSaved,
   onError,
 }: {
-  config: PublicConfig | null
+  empresaId: string
+  config: KommoConfigDto | null
   onSaved: (msg: string) => void
   onError: (msg: string) => void
 }) {
@@ -277,7 +309,6 @@ function ConfigTab({
   const [secret, setSecret] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState(false)
   const [copied, setCopied] = useState<'webhook' | null>(null)
 
   useEffect(() => {
@@ -285,28 +316,23 @@ function ConfigTab({
   }, [config])
 
   const webhookUrl = useMemo(() => {
-    if (typeof window === 'undefined') return ''
-    const base = window.location.origin
-    const secretQs = config?.webhookSecret ? `?secret=${encodeURIComponent(config.webhookSecret)}` : ''
-    return `${base}/api/kommo/webhook${secretQs}`
-  }, [config?.webhookSecret])
+    return buildKommoWebhookUrl(empresaId, config?.hasWebhookSecret ? '<seu-secret>' : null)
+  }, [empresaId, config?.hasWebhookSecret])
 
   async function save() {
-    if (!subdomain || !token) {
+    if (!subdomain || (!token && !config?.hasToken)) {
       onError('Preencha o subdomínio e o access token.')
       return
     }
     setSaving(true)
     try {
-      const r = await fetch('/api/kommo/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subdomain, accessToken: token, webhookSecret: secret || undefined }),
+      await kommoApi.saveConfig(empresaId, {
+        subdomain,
+        accessToken: token || '',
+        webhookSecret: secret || undefined,
       })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j.error || 'Falha ao salvar.')
       setToken('')
-      onSaved(`Conectado ao Kommo${j.account?.name ? ` — ${j.account.name}` : ''}.`)
+      onSaved('Conectado ao Kommo com sucesso.')
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Erro inesperado.')
     } finally {
@@ -315,10 +341,10 @@ function ConfigTab({
   }
 
   async function disconnect() {
-    if (!confirm('Remover a configuração da Kommo?')) return
+    if (!confirm('Remover a configuração da Kommo desta empresa?')) return
     setSaving(true)
     try {
-      await fetch('/api/kommo/config', { method: 'DELETE' })
+      await kommoApi.deleteConfig(empresaId)
       setToken('')
       setSubdomain('')
       onSaved('Desconectado.')
@@ -347,7 +373,7 @@ function ConfigTab({
           </div>
           <div>
             <h3 className="text-[15px] font-bold text-white">Credenciais Kommo</h3>
-            <p className="text-[12px] text-white/55">Subdomínio + access token de longa duração.</p>
+            <p className="text-[12px] text-white/55">Subdomínio + access token. Token criptografado at-rest no servidor.</p>
           </div>
         </div>
 
@@ -372,7 +398,7 @@ function ConfigTab({
                 type={showToken ? 'text' : 'password'}
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder={config?.hasToken ? `••••••••${config.tokenSuffix}` : 'Cole o token longo aqui'}
+                placeholder={config?.hasToken ? `••••••••${config.tokenSuffix ?? ''}` : 'Cole o token longo aqui'}
                 className="flex-1 h-10 px-3 bg-transparent text-sm font-mono text-white placeholder:text-white/35 focus:outline-none"
               />
               <button
@@ -385,7 +411,7 @@ function ConfigTab({
             </div>
             <p className="text-[11px] text-white/45 mt-1">
               Crie em Configurações → Integrações → Long-Lived Token na Kommo. O token é
-              armazenado apenas no servidor (não trafega para o navegador).
+              criptografado com IDataProtector antes de ir pro DB e nunca volta para o navegador.
             </p>
           </div>
 
@@ -430,12 +456,12 @@ function ConfigTab({
           </div>
           <div>
             <h3 className="text-[15px] font-bold text-white">Webhook (push)</h3>
-            <p className="text-[12px] text-white/55">Cole esta URL na Kommo para receber leads em tempo real.</p>
+            <p className="text-[12px] text-white/55">URL única por empresa. Cole na Kommo para receber leads em tempo real.</p>
           </div>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-[#0c0d10] p-3 flex items-center gap-2 mb-3">
-          <code className="flex-1 text-[12px] font-mono text-cyan-200 truncate">{webhookUrl || 'carregando…'}</code>
+          <code className="flex-1 text-[12px] font-mono text-cyan-200 truncate">{webhookUrl}</code>
           <button
             onClick={() => webhookUrl && copy(webhookUrl)}
             className="h-8 w-8 grid place-items-center rounded-lg hover:bg-white/[0.06] text-white/70 hover:text-white transition-colors"
@@ -443,13 +469,18 @@ function ConfigTab({
             {copied === 'webhook' ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
           </button>
         </div>
+        {config?.hasWebhookSecret && (
+          <p className="text-[11px] text-amber-300/80 mb-3">
+            Substitua <code>&lt;seu-secret&gt;</code> pelo secret que você definiu (não exibimos por segurança).
+          </p>
+        )}
 
         <div className="space-y-2 text-[12px] text-white/65">
           <p className="font-semibold text-white/85">Como configurar na Kommo:</p>
           <ol className="list-decimal list-inside space-y-1 pl-1">
             <li>Vá em <strong>Configurações → Integrações → Webhooks</strong>.</li>
             <li>Adicione um novo webhook com a URL acima.</li>
-            <li>Marque os eventos <em>Lead criado</em> e <em>Lead atualizado</em>.</li>
+            <li>Marque <em>Lead criado</em> e <em>Lead atualizado</em>.</li>
             <li>Salve. Os leads aparecerão na aba Inbox automaticamente.</li>
           </ol>
           <a
@@ -469,9 +500,11 @@ function ConfigTab({
 // ----- SYNC TAB -----
 
 function SyncTab({
+  empresaId,
   configured,
   onResult,
 }: {
+  empresaId: string
   configured: boolean
   onResult: (res: { kind: 'success' | 'error'; msg: string }) => void
 }) {
@@ -482,14 +515,11 @@ function SyncTab({
   async function run() {
     setRunning(true)
     try {
-      const r = await fetch('/api/kommo/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ limit, query: query || undefined }),
+      const j = await kommoApi.sync(empresaId, { limit, query: query || undefined })
+      onResult({
+        kind: 'success',
+        msg: `Sync concluído: ${j.received} leads recebidos, ${j.stored} novos na inbox.`,
       })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j.error || 'Falha no sync.')
-      onResult({ kind: 'success', msg: `Sync concluído: ${j.received} leads recebidos, ${j.stored} novos na inbox.` })
     } catch (err) {
       onResult({ kind: 'error', msg: err instanceof Error ? err.message : 'Erro desconhecido.' })
     } finally {
@@ -505,7 +535,7 @@ function SyncTab({
         </div>
         <div>
           <h3 className="text-[15px] font-bold text-white">Sincronização manual (pull)</h3>
-          <p className="text-[12px] text-white/55">Busca leads diretamente da Kommo via /api/v4/leads.</p>
+          <p className="text-[12px] text-white/55">Backend chama /api/v4/leads na Kommo e popula a inbox.</p>
         </div>
       </div>
 
@@ -563,15 +593,15 @@ function SyncTab({
 // ----- INBOX TAB -----
 
 function InboxTab({
+  empresaId,
   items,
   loading,
-  empresas,
   onRefresh,
   onFeedback,
 }: {
-  items: InboxItemDto[]
+  empresaId: string
+  items: KommoInboxItemDto[]
   loading: boolean
-  empresas: EmpresaDto[]
   onRefresh: () => void
   onFeedback: (f: { kind: 'success' | 'error' | 'info'; msg: string }) => void
 }) {
@@ -585,7 +615,7 @@ function InboxTab({
 
   async function clearAll() {
     if (!confirm('Apagar todos os itens da inbox? (não afeta leads já importados)')) return
-    await fetch('/api/kommo/inbox', { method: 'DELETE' })
+    await kommoApi.clearInbox(empresaId)
     onRefresh()
     onFeedback({ kind: 'info', msg: 'Inbox limpa.' })
   }
@@ -657,10 +687,10 @@ function InboxTab({
         {filtered.map((item) => (
           <InboxRow
             key={item.id}
+            empresaId={empresaId}
             item={item}
             expanded={expanded === item.id}
             onToggle={() => setExpanded((cur) => (cur === item.id ? null : item.id))}
-            empresas={empresas}
             onChanged={onRefresh}
             onFeedback={onFeedback}
           />
@@ -670,45 +700,49 @@ function InboxTab({
   )
 }
 
+function parseRaw(raw: string): { lead?: unknown; contact?: unknown } | null {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 function InboxRow({
+  empresaId,
   item,
   expanded,
   onToggle,
-  empresas,
   onChanged,
   onFeedback,
 }: {
-  item: InboxItemDto
+  empresaId: string
+  item: KommoInboxItemDto
   expanded: boolean
   onToggle: () => void
-  empresas: EmpresaDto[]
   onChanged: () => void
   onFeedback: (f: { kind: 'success' | 'error' | 'info'; msg: string }) => void
 }) {
   const analysis = useMemo<AnalyzeResult | null>(() => {
+    const parsed = parseRaw(item.raw)
+    if (!parsed) return null
     try {
-      const raw = item.raw as { lead?: unknown; contact?: unknown } | null
-      if (raw && typeof raw === 'object' && raw.lead) {
+      if (parsed.lead) {
         return analyzeKommoLead({
-          lead: raw.lead as Parameters<typeof analyzeKommoLead>[0]['lead'],
-          contact: (raw.contact as Parameters<typeof analyzeKommoLead>[0]['contact']) ?? null,
+          lead: parsed.lead as Parameters<typeof analyzeKommoLead>[0]['lead'],
+          contact: (parsed.contact as Parameters<typeof analyzeKommoLead>[0]['contact']) ?? null,
         })
       }
-      // Webhook payloads with bare {id, name} get a best-effort analysis too.
-      if (raw && typeof raw === 'object') {
-        return analyzeKommoLead({
-          lead: raw as Parameters<typeof analyzeKommoLead>[0]['lead'],
-          contact: null,
-        })
-      }
+      return analyzeKommoLead({
+        lead: parsed as Parameters<typeof analyzeKommoLead>[0]['lead'],
+        contact: null,
+      })
     } catch {
-      // ignore — analysis just won't show.
+      return null
     }
-    return null
   }, [item.raw])
 
   const completeness = analysis?.completeness ?? 0
-  const ready = analysis ? analysis.missingRequired.length === 0 : false
 
   return (
     <li className="rounded-2xl border border-white/5 bg-[#15171b] overflow-hidden">
@@ -753,15 +787,14 @@ function InboxRow({
         <div className="border-t border-white/5 p-4">
           {analysis ? (
             <GapAnalysisPanel
+              empresaId={empresaId}
               item={item}
               analysis={analysis}
-              ready={ready}
-              empresas={empresas}
               onChanged={onChanged}
               onFeedback={onFeedback}
             />
           ) : (
-            <RawPayloadPanel item={item} onChanged={onChanged} onFeedback={onFeedback} />
+            <RawPayloadPanel empresaId={empresaId} item={item} onChanged={onChanged} onFeedback={onFeedback} />
           )}
         </div>
       )}
@@ -769,7 +802,7 @@ function InboxRow({
   )
 }
 
-function StatusBadge({ status }: { status: InboxItemDto['status'] }) {
+function StatusBadge({ status }: { status: KommoInboxItemDto['status'] }) {
   if (status === 'imported') {
     return (
       <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-400/30 px-1.5 py-0.5 rounded-md inline-flex items-center gap-1">
@@ -800,32 +833,22 @@ function CompletenessBar({ value }: { value: number }) {
   )
 }
 
-// ----- Gap Analysis -----
-
 function GapAnalysisPanel({
+  empresaId,
   item,
   analysis,
-  ready,
-  empresas,
   onChanged,
   onFeedback,
 }: {
-  item: InboxItemDto
+  empresaId: string
+  item: KommoInboxItemDto
   analysis: AnalyzeResult
-  ready: boolean
-  empresas: EmpresaDto[]
   onChanged: () => void
   onFeedback: (f: { kind: 'success' | 'error' | 'info'; msg: string }) => void
 }) {
   const [overrides, setOverrides] = useState<Partial<Record<TargetField, unknown>>>({})
-  const [empresaId, setEmpresaId] = useState<string>(empresas[0]?.id ?? '')
   const [importing, setImporting] = useState(false)
 
-  useEffect(() => {
-    if (!empresaId && empresas[0]) setEmpresaId(empresas[0].id)
-  }, [empresas, empresaId])
-
-  // Effective payload = suggested + overrides
   const effective: Partial<CreateLeadPayload> = useMemo(() => {
     return { ...analysis.suggestedPayload, ...overrides } as Partial<CreateLeadPayload>
   }, [analysis.suggestedPayload, overrides])
@@ -839,7 +862,7 @@ function GapAnalysisPanel({
     )
   }, [effective])
 
-  const canImport = stillMissingRequired.length === 0 && empresaId && item.status === 'pending'
+  const canImport = stillMissingRequired.length === 0 && item.status === 'pending'
 
   async function importNow() {
     if (!canImport) return
@@ -849,7 +872,7 @@ function GapAnalysisPanel({
         nome: String(effective.nome ?? ''),
         telefone: String(effective.telefone ?? ''),
         origem: String(effective.origem ?? 'Kommo'),
-        tipo: (effective.tipo === 'Resgate' ? 'Resgate' : 'Cadastro'),
+        tipo: effective.tipo === 'Resgate' ? 'Resgate' : 'Cadastro',
         tipoResgate: effective.tipoResgate ? String(effective.tipoResgate) : undefined,
         interacao: !!effective.interacao,
         agendouConsulta: !!effective.agendouConsulta,
@@ -858,12 +881,7 @@ function GapAnalysisPanel({
         motivoNaoAgendamento: effective.motivoNaoAgendamento ? String(effective.motivoNaoAgendamento) : undefined,
         nomeResponsavel: String(effective.nomeResponsavel ?? '—'),
       }
-      const created = await leadsApi.create(empresaId, payload)
-      await fetch(`/api/kommo/inbox/${item.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'imported', importedLeadId: created.id, empresaId }),
-      })
+      const created = await kommoApi.promote(empresaId, item.id, payload)
       onFeedback({ kind: 'success', msg: `Lead "${created.nome}" criado no sistema.` })
       onChanged()
     } catch (err) {
@@ -874,29 +892,21 @@ function GapAnalysisPanel({
   }
 
   async function discard() {
-    await fetch(`/api/kommo/inbox/${item.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'discarded' }),
-    })
+    await kommoApi.patchItem(empresaId, item.id, { status: 'discarded' })
     onFeedback({ kind: 'info', msg: 'Item marcado como descartado.' })
     onChanged()
   }
 
   async function remove() {
     if (!confirm('Remover este item da inbox?')) return
-    await fetch(`/api/kommo/inbox/${item.id}`, { method: 'DELETE' })
+    await kommoApi.deleteItem(empresaId, item.id)
     onChanged()
   }
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[12px]">
-        <Stat
-          label="Mapeados"
-          value={`${analysis.matches.size}/${TARGETS.length}`}
-          tone="ok"
-        />
+        <Stat label="Mapeados" value={`${analysis.matches.size}/${TARGETS.length}`} tone="ok" />
         <Stat
           label="Faltando obrigatórios"
           value={stillMissingRequired.length}
@@ -909,7 +919,6 @@ function GapAnalysisPanel({
         />
       </div>
 
-      {/* Lista de campos */}
       <div className="rounded-2xl border border-white/5 bg-[#0c0d10] divide-y divide-white/5">
         {TARGETS.map((t) => {
           const match = analysis.matches.get(t.field)
@@ -966,22 +975,9 @@ function GapAnalysisPanel({
         })}
       </div>
 
-      {/* Ação final */}
       <div className="rounded-2xl border border-white/5 bg-[#0c0d10] p-4 flex flex-wrap items-center gap-3 justify-between">
         <div className="flex items-center gap-2 flex-wrap">
-          <Building2 className="h-4 w-4 text-white/55" />
-          <select
-            value={empresaId}
-            onChange={(e) => setEmpresaId(e.target.value)}
-            className="h-9 px-3 rounded-xl bg-[#15171b] border border-white/10 text-[13px] text-white focus:outline-none focus:border-cyan-400/50"
-          >
-            {empresas.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nome}
-              </option>
-            ))}
-          </select>
-          {!ready && (
+          {!canImport && stillMissingRequired.length > 0 && (
             <span className="text-[11px] text-amber-300">
               {stillMissingRequired.length} campo(s) obrigatório(s) ainda em branco — preencha acima.
             </span>
@@ -1089,14 +1085,23 @@ function FieldEditor({
 }
 
 function RawPayloadPanel({
+  empresaId,
   item,
   onChanged,
   onFeedback,
 }: {
-  item: InboxItemDto
+  empresaId: string
+  item: KommoInboxItemDto
   onChanged: () => void
   onFeedback: (f: { kind: 'success' | 'error' | 'info'; msg: string }) => void
 }) {
+  const formatted = useMemo(() => {
+    try {
+      return JSON.stringify(JSON.parse(item.raw), null, 2)
+    } catch {
+      return item.raw
+    }
+  }, [item.raw])
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.05] px-4 py-3 flex items-start gap-2">
@@ -1107,12 +1112,12 @@ function RawPayloadPanel({
         </p>
       </div>
       <pre className="text-[11px] font-mono bg-[#0c0d10] border border-white/5 p-3 rounded-xl text-white/65 max-h-64 overflow-auto whitespace-pre-wrap break-words">
-        {JSON.stringify(item.raw, null, 2)}
+        {formatted}
       </pre>
       <div className="flex justify-end">
         <button
           onClick={async () => {
-            await fetch(`/api/kommo/inbox/${item.id}`, { method: 'DELETE' })
+            await kommoApi.deleteItem(empresaId, item.id)
             onFeedback({ kind: 'info', msg: 'Item removido.' })
             onChanged()
           }}

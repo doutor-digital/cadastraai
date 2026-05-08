@@ -11,18 +11,19 @@ import {
   Wallet,
   Search,
   Filter,
-  Calendar,
   RefreshCw,
   Download,
   AlertCircle,
-  UploadCloud,
+  Plug2,
+  Trash2,
+  Pencil,
+  Sparkles,
 } from 'lucide-react'
 import {
+  auditApi,
   empresasApi,
-  leadsApi,
+  type AuditLogEntryDto,
   type EmpresaDto,
-  type LeadDetailDto,
-  type LeadSummaryDto,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -30,37 +31,48 @@ interface LogsViewProps {
   onBack: () => void
 }
 
-type EventKind = 'lead' | 'consulta' | 'tratamento' | 'recebimento'
-
-interface AuditEvent {
-  id: string
-  kind: EventKind
-  at: string
-  leadId: string
-  leadNome: string
-  responsavel: string
-  importado: boolean
-  detail: string
-  amount?: number
+// Famílias visuais por prefixo da action — cada controller usa "<entity>.<verb>".
+const ACTION_PALETTE: Record<string, { bg: string; text: string; border: string; icon: typeof UserPlus }> = {
+  lead: { bg: 'bg-cyan-500/10', text: 'text-cyan-300', border: 'border-cyan-400/30', icon: UserPlus },
+  consulta: { bg: 'bg-violet-500/10', text: 'text-violet-300', border: 'border-violet-400/30', icon: ClipboardPlus },
+  tratamento: { bg: 'bg-emerald-500/10', text: 'text-emerald-300', border: 'border-emerald-400/30', icon: HeartPulse },
+  recebimento: { bg: 'bg-amber-500/10', text: 'text-amber-300', border: 'border-amber-400/30', icon: Wallet },
+  kommo: { bg: 'bg-fuchsia-500/10', text: 'text-fuchsia-300', border: 'border-fuchsia-400/30', icon: Plug2 },
 }
 
-const KIND_LABEL: Record<EventKind, string> = {
-  lead: 'Lead criado',
-  consulta: 'Consulta cadastrada',
-  tratamento: 'Tratamento fechado',
-  recebimento: 'Recebimento registrado',
+const ACTION_LABEL: Record<string, string> = {
+  'lead.create': 'Lead criado',
+  'lead.update': 'Lead editado',
+  'lead.delete': 'Lead apagado',
+  'lead.bulk_import': 'Import em massa',
+  'lead.bulk_delete': 'Apagados em massa',
+  'consulta.create': 'Consulta cadastrada',
+  'consulta.update': 'Consulta editada',
+  'consulta.delete': 'Consulta apagada',
+  'tratamento.create': 'Tratamento fechado',
+  'tratamento.update': 'Tratamento editado',
+  'tratamento.delete': 'Tratamento apagado',
+  'recebimento.create': 'Recebimento registrado',
+  'recebimento.delete': 'Recebimento apagado',
+  'kommo.config.save': 'Kommo configurado',
+  'kommo.config.delete': 'Kommo desconectado',
+  'kommo.sync': 'Sync Kommo',
+  'kommo.webhook': 'Webhook Kommo',
+  'kommo.promote': 'Lead Kommo promovido',
+  'kommo.inbox.clear': 'Inbox Kommo limpa',
 }
 
-const KIND_COLOR: Record<EventKind, { bg: string; text: string; border: string; ring: string }> = {
-  lead: { bg: 'bg-cyan-500/10', text: 'text-cyan-300', border: 'border-cyan-400/30', ring: 'ring-cyan-400/30' },
-  consulta: { bg: 'bg-violet-500/10', text: 'text-violet-300', border: 'border-violet-400/30', ring: 'ring-violet-400/30' },
-  tratamento: { bg: 'bg-emerald-500/10', text: 'text-emerald-300', border: 'border-emerald-400/30', ring: 'ring-emerald-400/30' },
-  recebimento: { bg: 'bg-amber-500/10', text: 'text-amber-300', border: 'border-amber-400/30', ring: 'ring-amber-400/30' },
+function paletteFor(action: string) {
+  const family = action.split('.')[0]
+  return ACTION_PALETTE[family] ?? ACTION_PALETTE['lead']
 }
 
-function KindIcon({ kind, className }: { kind: EventKind; className?: string }) {
-  const Icon = kind === 'lead' ? UserPlus : kind === 'consulta' ? ClipboardPlus : kind === 'tratamento' ? HeartPulse : Wallet
-  return <Icon className={className} />
+function actionLabel(action: string): string {
+  return ACTION_LABEL[action] ?? action
+}
+
+function isDeleteAction(action: string): boolean {
+  return action.endsWith('.delete')
 }
 
 const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', {
@@ -102,16 +114,17 @@ function startOfRange(range: string): Date | null {
   return null
 }
 
-function downloadCsv(events: AuditEvent[]) {
-  const header = ['quando', 'tipo', 'lead', 'responsavel', 'detalhe', 'valor', 'origem']
+function downloadCsv(events: AuditLogEntryDto[]) {
+  const header = ['quando', 'acao', 'entidade', 'rotulo', 'usuario', 'email', 'campos_alterados', 'ip']
   const rows = events.map((e) => [
     formatDateTime(e.at),
-    KIND_LABEL[e.kind],
-    e.leadNome,
-    e.responsavel,
-    e.detail,
-    e.amount != null ? String(e.amount).replace('.', ',') : '',
-    e.importado ? 'Importado' : 'Manual',
+    actionLabel(e.action),
+    e.entityType,
+    e.entityLabel ?? '',
+    e.userName ?? '',
+    e.userEmail ?? '',
+    (e.changedFields ?? []).join('; '),
+    e.ip ?? '',
   ])
   const csv = [header, ...rows]
     .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
@@ -120,26 +133,29 @@ function downloadCsv(events: AuditEvent[]) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `logs-cadastraai-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `audit-cadastraai-${new Date().toISOString().slice(0, 10)}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
 
+const ACTION_FAMILIES = ['lead', 'consulta', 'tratamento', 'recebimento', 'kommo'] as const
+type ActionFamily = (typeof ACTION_FAMILIES)[number] | 'todos'
+
 export function LogsView({ onBack }: LogsViewProps) {
   const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
   const [empresaId, setEmpresaId] = useState('')
-  const [events, setEvents] = useState<AuditEvent[]>([])
+  const [events, setEvents] = useState<AuditLogEntryDto[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [refetchTick, setRefetchTick] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
-  const [kindFilter, setKindFilter] = useState<EventKind | 'todos'>('todos')
+  const [familyFilter, setFamilyFilter] = useState<ActionFamily>('todos')
   const [rangeFilter, setRangeFilter] = useState<'tudo' | 'hoje' | '7d' | '30d' | '90d'>('30d')
-  const [responsavelFilter, setResponsavelFilter] = useState<string>('todos')
-  const [fonteFilter, setFonteFilter] = useState<'todos' | 'manual' | 'importado'>('todos')
+  const [userFilter, setUserFilter] = useState<string>('todos')
 
-  // Carrega empresas
+  // Empresas
   useEffect(() => {
     let cancelled = false
     empresasApi
@@ -158,133 +174,71 @@ export function LogsView({ onBack }: LogsViewProps) {
     }
   }, [])
 
-  // Carrega leads + detalhes e monta eventos
+  // Auditoria — busca paginada do backend
   useEffect(() => {
     if (!empresaId) return
     let cancelled = false
     setLoading(true)
     setError(null)
 
-    async function load() {
-      try {
-        const resp = await leadsApi.list(empresaId, { pageSize: 500 })
+    const start = startOfRange(rangeFilter)
+    const fromIso = start ? start.toISOString() : undefined
+    const actionsFilter =
+      familyFilter === 'todos'
+        ? undefined
+        : Object.keys(ACTION_LABEL)
+            .filter((a) => a.startsWith(familyFilter + '.'))
+            .join(',')
+
+    auditApi
+      .list(empresaId, {
+        from: fromIso,
+        actions: actionsFilter,
+        userId: userFilter !== 'todos' ? userFilter : undefined,
+        page: 0,
+        pageSize: 500,
+      })
+      .then((resp) => {
         if (cancelled) return
-
-        // Pra ter consulta/tratamento/recebimentos precisamos o detalhe — só dos que têm consulta.
-        const detailsToFetch = resp.items.filter((l) => l.temConsulta).map((l) => l.id)
-        const details = await Promise.all(
-          detailsToFetch.map((id) => leadsApi.get(id).catch(() => null)),
-        )
-        if (cancelled) return
-
-        const detailMap = new Map<string, LeadDetailDto>()
-        for (const d of details) if (d) detailMap.set(d.id, d)
-
-        const out: AuditEvent[] = []
-        for (const l of resp.items) {
-          out.push({
-            id: `lead:${l.id}`,
-            kind: 'lead',
-            at: l.createdAt,
-            leadId: l.id,
-            leadNome: l.nome,
-            responsavel: l.nomeResponsavel,
-            importado: l.importado,
-            detail: leadDetailLine(l),
-          })
-          const detail = detailMap.get(l.id)
-          if (detail?.consulta) {
-            out.push({
-              id: `consulta:${detail.consulta.id}`,
-              kind: 'consulta',
-              at: detail.consulta.createdAt,
-              leadId: l.id,
-              leadNome: l.nome,
-              responsavel: l.nomeResponsavel,
-              importado: l.importado,
-              detail: consultaDetailLine(detail.consulta),
-              amount: detail.consulta.orcamento,
-            })
-            for (const r of detail.consulta.recebimentos ?? []) {
-              out.push({
-                id: `recebimento:${r.id}`,
-                kind: 'recebimento',
-                at: r.dataRecebimento,
-                leadId: l.id,
-                leadNome: l.nome,
-                responsavel: l.nomeResponsavel,
-                importado: l.importado,
-                detail: `Consulta · ${r.formaPagamento}`,
-                amount: r.valorRecebimento,
-              })
-            }
-            if (detail.consulta.tratamento) {
-              out.push({
-                id: `tratamento:${detail.consulta.tratamento.id}`,
-                kind: 'tratamento',
-                at: detail.consulta.tratamento.createdAt,
-                leadId: l.id,
-                leadNome: l.nome,
-                responsavel: l.nomeResponsavel,
-                importado: l.importado,
-                detail: detail.consulta.tratamento.planoTratamento,
-                amount: detail.consulta.tratamento.valorPlano,
-              })
-              for (const r of detail.consulta.tratamento.recebimentos ?? []) {
-                out.push({
-                  id: `recebimento:${r.id}`,
-                  kind: 'recebimento',
-                  at: r.dataRecebimento,
-                  leadId: l.id,
-                  leadNome: l.nome,
-                  responsavel: l.nomeResponsavel,
-                  importado: l.importado,
-                  detail: `Tratamento · ${r.formaPagamento}`,
-                  amount: r.valorRecebimento,
-                })
-              }
-            }
-          }
-        }
-        out.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
-        setEvents(out)
-      } catch (err) {
+        setEvents(resp.items)
+        setTotal(resp.total)
+      })
+      .catch((err) => {
         if (cancelled) return
         setError(err instanceof Error ? err.message : 'Erro ao carregar logs.')
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false)
-      }
-    }
-
-    load()
+      })
     return () => {
       cancelled = true
     }
-  }, [empresaId, refetchTick])
+  }, [empresaId, refetchTick, rangeFilter, familyFilter, userFilter])
 
-  const responsaveis = useMemo(() => {
-    const set = new Set<string>()
-    for (const e of events) if (e.responsavel) set.add(e.responsavel)
-    return Array.from(set).sort()
+  const usuarios = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const e of events) {
+      if (e.userId && e.userName && !seen.has(e.userId)) seen.set(e.userId, e.userName)
+    }
+    return Array.from(seen, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [events])
 
   const filtered = useMemo(() => {
-    const minTime = startOfRange(rangeFilter)?.getTime() ?? null
     const q = search.trim().toLowerCase()
-    return events.filter((e) => {
-      if (kindFilter !== 'todos' && e.kind !== kindFilter) return false
-      if (minTime != null && new Date(e.at).getTime() < minTime) return false
-      if (responsavelFilter !== 'todos' && e.responsavel !== responsavelFilter) return false
-      if (fonteFilter === 'manual' && e.importado) return false
-      if (fonteFilter === 'importado' && !e.importado) return false
-      if (q && !`${e.leadNome} ${e.responsavel} ${e.detail}`.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [events, kindFilter, rangeFilter, responsavelFilter, fonteFilter, search])
+    if (!q) return events
+    return events.filter((e) =>
+      `${e.entityLabel ?? ''} ${e.userName ?? ''} ${e.userEmail ?? ''} ${actionLabel(e.action)} ${(e.changedFields ?? []).join(' ')}`
+        .toLowerCase()
+        .includes(q),
+    )
+  }, [events, search])
 
   const counts = useMemo(() => {
-    const c = { lead: 0, consulta: 0, tratamento: 0, recebimento: 0 }
-    for (const e of filtered) c[e.kind]++
+    const c: Record<string, number> = { lead: 0, consulta: 0, tratamento: 0, recebimento: 0, kommo: 0 }
+    for (const e of filtered) {
+      const family = e.action.split('.')[0]
+      if (family in c) c[family]++
+    }
     return c
   }, [filtered])
 
@@ -336,8 +290,8 @@ export function LogsView({ onBack }: LogsViewProps) {
             <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Auditoria</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-none">Trilha de eventos</h1>
             <p className="text-[13px] text-cyan-100/85 mt-2">
-              Toda criação de lead, consulta, tratamento e recebimento da empresa selecionada — em ordem
-              cronológica. Use os filtros para investigar.
+              Cada ação no sistema é registrada com autor, IP e — quando aplicável — quais campos
+              foram alterados. Use os filtros para investigar.
             </p>
           </div>
         </div>
@@ -377,103 +331,65 @@ export function LogsView({ onBack }: LogsViewProps) {
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-white/45 font-semibold">Responsável</label>
+            <label className="text-[10px] uppercase tracking-wider text-white/45 font-semibold">Usuário</label>
             <select
-              value={responsavelFilter}
-              onChange={(e) => setResponsavelFilter(e.target.value)}
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
               className="mt-1 w-full h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/10 text-sm text-white focus:outline-none focus:border-cyan-400/50"
             >
               <option value="todos">Todos</option>
-              {responsaveis.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+              {usuarios.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-white/45 font-semibold">Origem</label>
-            <select
-              value={fonteFilter}
-              onChange={(e) => setFonteFilter(e.target.value as typeof fonteFilter)}
-              className="mt-1 w-full h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/10 text-sm text-white focus:outline-none focus:border-cyan-400/50"
-            >
-              <option value="todos">Todos</option>
-              <option value="manual">Manual</option>
-              <option value="importado">Importado</option>
-            </select>
+            <label className="text-[10px] uppercase tracking-wider text-white/45 font-semibold">Total</label>
+            <div className="mt-1 h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/10 flex items-center text-sm text-white tabular-nums">
+              {total} eventos
+            </div>
           </div>
         </div>
 
-        {/* Busca + chips de tipo */}
         <div className="flex flex-col md:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar por lead, responsável ou detalhe…"
+              placeholder="Buscar por entidade, usuário, e-mail ou campo alterado…"
               className="w-full h-10 pl-9 pr-3 rounded-xl bg-[#0c0d10] border border-white/10 text-sm text-white placeholder:text-white/35 focus:outline-none focus:border-cyan-400/50"
             />
           </div>
           <div className="flex flex-wrap gap-2">
-            <KindChip
-              active={kindFilter === 'todos'}
-              onClick={() => setKindFilter('todos')}
+            <FamilyChip
+              active={familyFilter === 'todos'}
+              onClick={() => setFamilyFilter('todos')}
               label="Tudo"
               count={filtered.length}
             />
-            <KindChip
-              active={kindFilter === 'lead'}
-              onClick={() => setKindFilter('lead')}
-              label="Leads"
-              count={counts.lead}
-              kind="lead"
-            />
-            <KindChip
-              active={kindFilter === 'consulta'}
-              onClick={() => setKindFilter('consulta')}
-              label="Consultas"
-              count={counts.consulta}
-              kind="consulta"
-            />
-            <KindChip
-              active={kindFilter === 'tratamento'}
-              onClick={() => setKindFilter('tratamento')}
-              label="Tratamentos"
-              count={counts.tratamento}
-              kind="tratamento"
-            />
-            <KindChip
-              active={kindFilter === 'recebimento'}
-              onClick={() => setKindFilter('recebimento')}
-              label="Recebimentos"
-              count={counts.recebimento}
-              kind="recebimento"
-            />
+            {ACTION_FAMILIES.map((f) => (
+              <FamilyChip
+                key={f}
+                active={familyFilter === f}
+                onClick={() => setFamilyFilter(f)}
+                label={f.charAt(0).toUpperCase() + f.slice(1)}
+                count={counts[f] ?? 0}
+                family={f}
+              />
+            ))}
           </div>
-        </div>
-
-        {/* Aviso sobre limitação de auditoria */}
-        <div className="flex items-start gap-3 rounded-xl border border-amber-400/20 bg-amber-500/[0.04] px-4 py-3">
-          <AlertCircle className="h-4 w-4 text-amber-300 shrink-0 mt-0.5" />
-          <p className="text-[12px] text-amber-100/80 leading-relaxed">
-            <strong>Sobre o "quem fez":</strong> a coluna "Responsável" reflete o
-            <em> nomeResponsavel</em> do lead — não necessariamente quem clicou em "Salvar". Para
-            rastrear o usuário autor de cada evento, é preciso adicionar <code>createdBy</code> nas
-            entidades do backend C#.
-          </p>
         </div>
       </div>
 
-      {/* Erro */}
       {error && (
         <div className="rounded-2xl border border-red-400/30 bg-red-500/[0.06] px-5 py-4 mb-5 text-red-200 text-sm">
           {error}
         </div>
       )}
 
-      {/* Timeline */}
       {loading && events.length === 0 ? (
         <SkeletonTimeline />
       ) : filtered.length === 0 ? (
@@ -497,20 +413,21 @@ export function LogsView({ onBack }: LogsViewProps) {
   )
 }
 
-function KindChip({
+function FamilyChip({
   active,
   onClick,
   label,
   count,
-  kind,
+  family,
 }: {
   active: boolean
   onClick: () => void
   label: string
   count: number
-  kind?: EventKind
+  family?: string
 }) {
-  const palette = kind ? KIND_COLOR[kind] : null
+  const palette = family ? ACTION_PALETTE[family] : null
+  const Icon = palette?.icon
   return (
     <button
       onClick={onClick}
@@ -523,33 +440,16 @@ function KindChip({
           : 'bg-[#0c0d10] text-white/55 border-white/10 hover:text-white hover:border-white/20',
       )}
     >
-      {kind && <KindIcon kind={kind} className="h-4 w-4" />}
+      {Icon && <Icon className="h-4 w-4" />}
       <span className="font-semibold">{label}</span>
       <span className="text-[11px] tabular-nums opacity-80">{count}</span>
     </button>
   )
 }
 
-function leadDetailLine(l: LeadSummaryDto): string {
-  const bits: string[] = []
-  bits.push(l.tipo === 'Resgate' ? 'Resgate' : 'Cadastro')
-  bits.push(l.origem)
-  if (l.agendouConsulta) bits.push('agendou')
-  else if (l.motivoNaoAgendamento) bits.push(`não agendou (${l.motivoNaoAgendamento})`)
-  return bits.join(' · ')
-}
-
-function consultaDetailLine(c: { compareceu: boolean; fechouTratamento: boolean; tratamentoIndicado: string }): string {
-  const bits: string[] = []
-  if (c.compareceu) bits.push('compareceu')
-  else bits.push('não compareceu')
-  if (c.fechouTratamento) bits.push('fechou tratamento')
-  if (c.tratamentoIndicado) bits.push(c.tratamentoIndicado)
-  return bits.join(' · ')
-}
-
-function EventRow({ event }: { event: AuditEvent }) {
-  const palette = KIND_COLOR[event.kind]
+function EventRow({ event }: { event: AuditLogEntryDto }) {
+  const palette = paletteFor(event.action)
+  const Icon = isDeleteAction(event.action) ? Trash2 : event.action.endsWith('.update') ? Pencil : palette.icon
   return (
     <li className="px-5 py-4 hover:bg-white/[0.02] transition-colors">
       <div className="flex items-start gap-4">
@@ -560,30 +460,34 @@ function EventRow({ event }: { event: AuditEvent }) {
             palette.border,
           )}
         >
-          <KindIcon kind={event.kind} className={cn('h-4 w-4', palette.text)} />
+          <Icon className={cn('h-4 w-4', palette.text)} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center flex-wrap gap-2 mb-1">
             <span className={cn('text-[11px] uppercase tracking-wider font-bold', palette.text)}>
-              {KIND_LABEL[event.kind]}
+              {actionLabel(event.action)}
             </span>
-            {event.importado && (
-              <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold text-violet-300 bg-violet-500/10 border border-violet-400/30 px-1.5 py-0.5 rounded-md">
-                <UploadCloud className="h-3 w-3" />
-                Importado
-              </span>
-            )}
-            {event.amount != null && (
-              <span className="text-[11px] font-mono tabular-nums text-emerald-300 bg-emerald-500/10 border border-emerald-400/30 px-1.5 py-0.5 rounded-md">
-                R$ {event.amount.toLocaleString('pt-BR')}
-              </span>
-            )}
+            <span className="text-[10px] uppercase tracking-wider font-bold text-white/45 bg-white/[0.04] border border-white/10 px-1.5 py-0.5 rounded-md">
+              {event.entityType}
+            </span>
           </div>
-          <p className="text-[14px] text-white font-semibold truncate">{event.leadNome}</p>
-          <p className="text-[12px] text-white/55 truncate">{event.detail}</p>
+          <p className="text-[14px] text-white font-semibold truncate">
+            {event.entityLabel ?? '—'}
+          </p>
+          {event.changedFields && event.changedFields.length > 0 && (
+            <p className="text-[12px] text-white/60 truncate flex items-center gap-1.5 mt-0.5">
+              <Sparkles className="h-3 w-3 text-amber-300/80" />
+              Campos: {event.changedFields.join(', ')}
+            </p>
+          )}
         </div>
         <div className="text-right shrink-0">
-          <p className="text-[12px] text-white/85 font-semibold">{event.responsavel || '—'}</p>
+          <p className="text-[12px] text-white/85 font-semibold truncate max-w-[180px]">
+            {event.userName ?? <span className="text-white/45">sistema</span>}
+          </p>
+          {event.userEmail && (
+            <p className="text-[10px] text-white/45 truncate max-w-[180px]">{event.userEmail}</p>
+          )}
           <p className="text-[11px] text-white/45">{relativeTime(event.at)}</p>
           <p className="text-[10px] text-white/35 font-mono mt-0.5">{formatDateTime(event.at)}</p>
         </div>

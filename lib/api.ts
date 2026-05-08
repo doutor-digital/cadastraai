@@ -255,6 +255,10 @@ export interface RecebimentoDto {
   valorRecebimento: number
   formaPagamento: string
   dataRecebimento: string
+  // Auditoria — populados quando o backend tem a migration AddAuditAndCreatedBy aplicada.
+  createdByUserId?: string | null
+  createdByName?: string | null
+  createdAt?: string | null
 }
 
 export interface TratamentoDto {
@@ -266,6 +270,8 @@ export interface TratamentoDto {
   procedimento?: string | null
   valorPlano: number
   createdAt: string
+  createdByUserId?: string | null
+  createdByName?: string | null
   recebimentos: RecebimentoDto[]
 }
 
@@ -280,6 +286,8 @@ export interface ConsultaDto {
   fechouTratamento: boolean
   motivoNaoFechamento?: string | null
   createdAt: string
+  createdByUserId?: string | null
+  createdByName?: string | null
   tratamento?: TratamentoDto | null
   recebimentos: RecebimentoDto[]
 }
@@ -300,6 +308,8 @@ export interface LeadSummaryDto {
   nomeResponsavel: string
   createdAt: string
   importado: boolean
+  createdByUserId?: string | null
+  createdByName?: string | null
   temConsulta: boolean
   compareceu?: boolean | null
   fechouTratamento?: boolean | null
@@ -325,6 +335,8 @@ export interface LeadDetailDto {
   nomeResponsavel: string
   createdAt: string
   importado: boolean
+  createdByUserId?: string | null
+  createdByName?: string | null
   consulta?: ConsultaDto | null
 }
 
@@ -524,4 +536,119 @@ export const motivosNaoFechamentoApi = {
     api.post<MotivoNaoFechamentoDto>(`/api/empresas/${empresaId}/motivos-nao-fechamento`, data),
   delete: (empresaId: string, motivoId: string) =>
     api.delete<void>(`/api/empresas/${empresaId}/motivos-nao-fechamento/${motivoId}`),
+}
+
+// ----- Audit log -----
+export interface AuditLogEntryDto {
+  id: string
+  empresaId: string
+  userId?: string | null
+  userName?: string | null
+  userEmail?: string | null
+  action: string
+  entityType: string
+  entityId?: string | null
+  entityLabel?: string | null
+  changedFields?: string[] | null
+  ip?: string | null
+  at: string
+}
+
+export interface AuditLogPageDto {
+  items: AuditLogEntryDto[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface ListAuditLogParams {
+  from?: string
+  to?: string
+  actions?: string
+  userId?: string
+  entityType?: string
+  page?: number
+  pageSize?: number
+}
+
+export const auditApi = {
+  list: (empresaId: string, params: ListAuditLogParams = {}) => {
+    const q: Record<string, string> = {}
+    if (params.from) q.from = params.from
+    if (params.to) q.to = params.to
+    if (params.actions) q.actions = params.actions
+    if (params.userId) q.userId = params.userId
+    if (params.entityType) q.entityType = params.entityType
+    if (params.page !== undefined) q.page = String(params.page)
+    if (params.pageSize !== undefined) q.pageSize = String(params.pageSize)
+    return api.get<AuditLogPageDto>(`/api/empresas/${empresaId}/audit-log`, q)
+  },
+}
+
+// ----- Kommo (backend-managed, per-empresa) -----
+export interface KommoConfigDto {
+  subdomain: string
+  hasToken: boolean
+  tokenSuffix?: string | null
+  hasWebhookSecret: boolean
+  lastSyncAt?: string | null
+}
+
+export interface SaveKommoConfigPayload {
+  subdomain: string
+  accessToken: string
+  webhookSecret?: string
+}
+
+export interface KommoSyncResponseDto {
+  received: number
+  stored: number
+  lastSyncAt: string
+}
+
+export interface KommoInboxItemDto {
+  id: string
+  empresaId: string
+  kommoLeadId?: number | null
+  source: 'webhook' | 'sync'
+  receivedAt: string
+  status: 'pending' | 'imported' | 'discarded'
+  importedLeadId?: string | null
+  note?: string | null
+  raw: string
+}
+
+export const kommoApi = {
+  getConfig: (empresaId: string) =>
+    api.get<KommoConfigDto | null>(`/api/empresas/${empresaId}/kommo/config`),
+  saveConfig: (empresaId: string, data: SaveKommoConfigPayload) =>
+    api.put<KommoConfigDto>(`/api/empresas/${empresaId}/kommo/config`, data),
+  deleteConfig: (empresaId: string) =>
+    api.delete<void>(`/api/empresas/${empresaId}/kommo/config`),
+  sync: (empresaId: string, opts: { limit?: number; page?: number; query?: string } = {}) =>
+    api.post<KommoSyncResponseDto>(`/api/empresas/${empresaId}/kommo/sync`, opts),
+  inbox: (empresaId: string, status?: 'pending' | 'imported' | 'discarded') =>
+    api.get<KommoInboxItemDto[]>(
+      `/api/empresas/${empresaId}/kommo/inbox`,
+      status ? { status } : undefined,
+    ),
+  clearInbox: (empresaId: string) =>
+    api.delete<{ deleted: number }>(`/api/empresas/${empresaId}/kommo/inbox`),
+  patchItem: (
+    empresaId: string,
+    itemId: string,
+    patch: { status?: 'pending' | 'imported' | 'discarded'; note?: string },
+  ) => api.patch<KommoInboxItemDto>(`/api/empresas/${empresaId}/kommo/inbox/${itemId}`, patch),
+  deleteItem: (empresaId: string, itemId: string) =>
+    api.delete<void>(`/api/empresas/${empresaId}/kommo/inbox/${itemId}`),
+  promote: (empresaId: string, itemId: string, lead: CreateLeadPayload) =>
+    api.post<LeadDetailDto>(`/api/empresas/${empresaId}/kommo/inbox/${itemId}/promote`, { lead }),
+}
+
+// URL pública do webhook que o usuário cola na Kommo. Construída no client porque
+// depende do API_BASE_URL configurado.
+export function buildKommoWebhookUrl(empresaId: string, secret?: string | null): string {
+  const base = API_BASE_URL.replace(/\/$/, '')
+  const s = secret ? `?secret=${encodeURIComponent(secret)}` : ''
+  return `${base}/api/empresas/${empresaId}/kommo/webhook${s}`
 }
