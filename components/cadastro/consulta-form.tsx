@@ -6,9 +6,25 @@ import { ClipboardPlus, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Pho
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, ToggleSwitch, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
-import { addConsulta, updateConsulta, useCadastroStore } from '@/lib/cadastro-store'
+import {
+  consultasApi,
+  empresasApi,
+  leadsApi,
+  recebimentosApi,
+  type ConsultaDto,
+  type CreateConsultaPayload,
+  type EmpresaDto,
+  type LeadSummaryDto,
+  type RecebimentoDto,
+} from '@/lib/api'
 import { useConfig } from '@/lib/config-store'
-import { MOTIVOS_NAO_FECHAMENTO_DEFAULT, type Consulta, type CorSemaforo, type Lead } from '@/types'
+import {
+  MOTIVOS_NAO_FECHAMENTO_DEFAULT,
+  type Consulta,
+  type CorSemaforo,
+  type Lead,
+  type Recebimento,
+} from '@/types'
 
 interface ConsultaFormProps {
   onBack: () => void
@@ -56,6 +72,53 @@ function fromConsulta(c: Consulta): FormState {
     compareceu: c.compareceu,
     fechouTratamento: c.fechouTratamento,
     motivoNaoFechamento: c.motivoNaoFechamento ?? '',
+  }
+}
+
+function summaryToLead(s: LeadSummaryDto): Lead {
+  return {
+    id: s.id,
+    empresaId: s.empresaId,
+    nome: s.nome,
+    telefone: s.telefone,
+    origem: s.origem,
+    tipo: (s.tipo === 'Resgate' ? 'Resgate' : 'Cadastro') as Lead['tipo'],
+    tipoResgate: s.tipoResgate ?? undefined,
+    interacao: s.interacao,
+    agendouConsulta: s.agendouConsulta,
+    pagamentoAntecipado: s.pagamentoAntecipado,
+    dataAgendamento: s.dataAgendamento ?? undefined,
+    motivoNaoAgendamento: s.motivoNaoAgendamento ?? undefined,
+    nomeResponsavel: s.nomeResponsavel,
+    createdAt: s.createdAt,
+    importado: s.importado,
+  }
+}
+
+function recebimentoDtoToLocal(r: RecebimentoDto): Recebimento {
+  return {
+    id: r.id,
+    valorRecebimento: r.valorRecebimento,
+    formaPagamento: r.formaPagamento,
+    dataRecebimento: r.dataRecebimento,
+    consultaId: r.consultaId ?? undefined,
+    tratamentoId: r.tratamentoId ?? undefined,
+  }
+}
+
+function consultaDtoToLocal(c: ConsultaDto): Consulta {
+  return {
+    id: c.id,
+    leadId: c.leadId,
+    valorConsulta: c.valorConsulta,
+    pagamentoAntecipado: c.pagamentoAntecipado,
+    recebimentos: (c.recebimentos ?? []).map(recebimentoDtoToLocal),
+    tratamentoIndicado: c.tratamentoIndicado,
+    orcamento: c.orcamento,
+    compareceu: c.compareceu,
+    fechouTratamento: c.fechouTratamento,
+    motivoNaoFechamento: c.motivoNaoFechamento ?? undefined,
+    createdAt: c.createdAt,
   }
 }
 
@@ -108,15 +171,17 @@ function LeadCard({ lead }: { lead: Lead }) {
 }
 
 export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: ConsultaFormProps) {
-  const store = useCadastroStore()
   const config = useConfig()
   const planoOptions = useMemo(
     () => config.planosTratamento.map((p) => ({ value: p, label: p })),
     [config.planosTratamento],
   )
-  const usedLeadIds = useMemo(() => new Set(store.consultas.map((c) => c.leadId)), [store.consultas])
 
-  const availableLeads = useMemo(() => store.leads, [store.leads])
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState<string>('')
+  const [leads, setLeads] = useState<LeadSummaryDto[]>([])
+  const [leadsLoading, setLeadsLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const [data, setData] = useState<FormState>(() =>
     editing ? fromConsulta(editing) : { ...initialState, leadId: prefilledLeadId ?? '' },
@@ -127,15 +192,76 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
     if (editing) setData(fromConsulta(editing))
   }, [editing])
 
-  const selectedLead = useMemo(
-    () => store.leads.find((l) => l.id === data.leadId) ?? null,
-    [store.leads, data.leadId],
-  )
+  // Carrega empresas. Se for edição/prefill, descobre a empresa do lead correspondente.
+  useEffect(() => {
+    let cancelled = false
+    async function init() {
+      try {
+        const list = await empresasApi.list()
+        if (cancelled) return
+        setEmpresas(list)
+
+        const refLeadId = editing?.leadId ?? prefilledLeadId
+        if (refLeadId) {
+          try {
+            const detail = await leadsApi.get(refLeadId)
+            if (cancelled) return
+            setEmpresaId(detail.empresaId)
+            return
+          } catch {
+            // cai no padrão (primeira empresa)
+          }
+        }
+        setEmpresaId(list[0]?.id ?? '')
+      } catch (err) {
+        if (cancelled) return
+        setFeedback({
+          kind: 'error',
+          msg: err instanceof Error ? err.message : 'Erro ao carregar empresas.',
+        })
+      }
+    }
+    init()
+    return () => {
+      cancelled = true
+    }
+  }, [editing, prefilledLeadId])
+
+  // Carrega leads da empresa selecionada (até 500). É o universo do select.
+  useEffect(() => {
+    if (!empresaId) return
+    let cancelled = false
+    setLeadsLoading(true)
+    leadsApi
+      .list(empresaId, { pageSize: 500 })
+      .then((res) => {
+        if (cancelled) return
+        setLeads(res.items)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setFeedback({
+          kind: 'error',
+          msg: err instanceof Error ? err.message : 'Erro ao carregar leads.',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setLeadsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [empresaId])
+
+  const selectedLead: Lead | null = useMemo(() => {
+    const summary = leads.find((l) => l.id === data.leadId)
+    return summary ? summaryToLead(summary) : null
+  }, [leads, data.leadId])
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFeedback(null)
     if (!data.leadId) {
@@ -154,43 +280,77 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
       setFeedback({ kind: 'error', msg: 'Consulta aceita no máximo 2 recebimentos.' })
       return
     }
+
+    const payload: CreateConsultaPayload = {
+      valorConsulta: data.valorConsulta,
+      pagamentoAntecipado: data.pagamentoAntecipado,
+      tratamentoIndicado: data.tratamentoIndicado,
+      orcamento: data.orcamento,
+      compareceu: data.compareceu,
+      fechouTratamento: data.fechouTratamento,
+      motivoNaoFechamento: data.fechouTratamento ? undefined : data.motivoNaoFechamento.trim() || undefined,
+    }
+
+    setSubmitting(true)
     try {
-      const payload = {
-        leadId: data.leadId,
-        valorConsulta: data.valorConsulta,
-        pagamentoAntecipado: data.pagamentoAntecipado,
-        recebimentos: data.recebimentos,
-        tratamentoIndicado: data.tratamentoIndicado,
-        orcamento: data.orcamento,
-        compareceu: data.compareceu,
-        fechouTratamento: data.fechouTratamento,
-        motivoNaoFechamento: data.motivoNaoFechamento,
+      let consultaDto: ConsultaDto
+      if (editing) {
+        consultaDto = await consultasApi.update(editing.id, payload)
+        // Reposta os recebimentos: deleta os existentes e recria os novos.
+        for (const old of consultaDto.recebimentos ?? []) {
+          await recebimentosApi.delete(old.id)
+        }
+        for (const r of data.recebimentos) {
+          await recebimentosApi.createForConsulta(consultaDto.id, r)
+        }
+      } else {
+        consultaDto = await consultasApi.create(data.leadId, payload)
+        for (const r of data.recebimentos) {
+          await recebimentosApi.createForConsulta(consultaDto.id, r)
+        }
       }
-      const consulta = editing
-        ? updateConsulta(editing.id, payload)
-        : addConsulta(payload)
-      if (!consulta) {
-        setFeedback({ kind: 'error', msg: 'Não foi possível salvar a consulta.' })
-        return
-      }
-      const leadName = store.leads.find((l) => l.id === consulta.leadId)?.nome ?? 'lead'
+
+      // Recarrega a consulta com os recebimentos atualizados
+      // (lendo o lead inteiro pra garantir consistência).
+      const refreshedLead = await leadsApi.get(consultaDto.leadId)
+      const consulta: Consulta = refreshedLead.consulta
+        ? consultaDtoToLocal(refreshedLead.consulta)
+        : consultaDtoToLocal(consultaDto)
+
+      const leadName = leads.find((l) => l.id === consulta.leadId)?.nome ?? 'lead'
       setFeedback({
         kind: 'success',
-        msg: editing
-          ? `Consulta de ${leadName} atualizada.`
-          : `Consulta cadastrada para ${leadName}.`,
+        msg: editing ? `Consulta de ${leadName} atualizada.` : `Consulta cadastrada para ${leadName}.`,
       })
       if (!editing) setData({ ...initialState })
       onSaved?.(consulta)
     } catch (err) {
       setFeedback({
         kind: 'error',
-        msg: err instanceof Error ? err.message : 'Erro inesperado ao cadastrar.',
+        msg: err instanceof Error ? err.message : 'Erro inesperado ao salvar consulta.',
       })
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  if (availableLeads.length === 0 && !editing) {
+  if (!empresaId) {
+    return (
+      <CadastroFormShell
+        title={editing ? 'Editar Consulta' : 'Cadastrar Consulta'}
+        description="Carregando…"
+        icon={editing ? Pencil : ClipboardPlus}
+        accent="#a78bfa"
+        onBack={onBack}
+      >
+        <div className="text-center py-12 px-4 rounded-xl border border-dashed border-white/10 text-sm text-muted-foreground">
+          Carregando empresas…
+        </div>
+      </CadastroFormShell>
+    )
+  }
+
+  if (!editing && leads.length === 0 && !leadsLoading) {
     return (
       <CadastroFormShell
         title="Cadastrar Consulta"
@@ -222,6 +382,20 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
       onBack={onBack}
     >
       <form onSubmit={handleSubmit} className="space-y-6">
+        {!editing && empresas.length > 1 && (
+          <SelectInput
+            label="Empresa"
+            value={empresaId}
+            onChange={(e) => {
+              setEmpresaId(e.target.value)
+              setData((prev) => ({ ...prev, leadId: '' }))
+            }}
+            options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+            placeholder="Selecione a empresa…"
+            required
+          />
+        )}
+
         {selectedLead ? (
           <LeadCard lead={selectedLead} />
         ) : (
@@ -229,8 +403,8 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
             label="Lead"
             value={data.leadId}
             onChange={(v) => set('leadId', v)}
-            options={availableLeads.map((l) => {
-              const jaTem = usedLeadIds.has(l.id) && l.id !== editing?.leadId
+            options={leads.map((l) => {
+              const jaTem = l.temConsulta && l.consultaId !== editing?.id
               return {
                 value: l.id,
                 label: jaTem ? `${l.nome} · já tem consulta` : l.nome,
@@ -238,7 +412,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
                 disabled: jaTem,
               }
             })}
-            placeholder="Selecione um lead…"
+            placeholder={leadsLoading ? 'Carregando leads…' : 'Selecione um lead…'}
             searchPlaceholder="Pesquisar lead pelo nome ou telefone…"
             required
             hint="Digite parte do nome do lead. Os marcados como 'já tem consulta' ficam desabilitados."
@@ -383,9 +557,12 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
           </button>
           <button
             type="submit"
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-purple-400 to-fuchsia-500 shadow-[0_0_24px_rgba(167,139,250,0.35)] hover:from-purple-300 hover:to-fuchsia-400 transition-all"
+            disabled={submitting}
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-purple-400 to-fuchsia-500 shadow-[0_0_24px_rgba(167,139,250,0.35)] hover:from-purple-300 hover:to-fuchsia-400 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
           >
-            {editing ? 'Salvar alterações' : 'Cadastrar Consulta'}
+            {submitting
+              ? (editing ? 'Salvando…' : 'Cadastrando…')
+              : (editing ? 'Salvar alterações' : 'Cadastrar Consulta')}
           </button>
         </div>
       </form>

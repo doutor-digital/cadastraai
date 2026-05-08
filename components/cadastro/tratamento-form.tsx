@@ -6,9 +6,19 @@ import { HeartPulse, Pencil, CheckCircle2, AlertCircle, User as UserIcon, Phone,
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
-import { addTratamento, updateTratamento, useCadastroStore } from '@/lib/cadastro-store'
+import {
+  empresasApi,
+  leadsApi,
+  recebimentosApi,
+  tratamentosApi,
+  type CreateTratamentoPayload,
+  type EmpresaDto,
+  type LeadSummaryDto,
+  type RecebimentoDto,
+  type TratamentoDto,
+} from '@/lib/api'
 import { useConfig } from '@/lib/config-store'
-import type { Consulta, Lead, Tratamento } from '@/types'
+import type { Recebimento, Tratamento } from '@/types'
 
 interface TratamentoFormProps {
   onBack: () => void
@@ -53,13 +63,40 @@ function fromTratamento(t: Tratamento): FormState {
   }
 }
 
+function recebimentoDtoToLocal(r: RecebimentoDto): Recebimento {
+  return {
+    id: r.id,
+    valorRecebimento: r.valorRecebimento,
+    formaPagamento: r.formaPagamento,
+    dataRecebimento: r.dataRecebimento,
+    consultaId: r.consultaId ?? undefined,
+    tratamentoId: r.tratamentoId ?? undefined,
+  }
+}
+
+function tratamentoDtoToLocal(t: TratamentoDto): Tratamento {
+  return {
+    id: t.id,
+    consultaId: t.consultaId,
+    planoTratamento: t.planoTratamento,
+    planoPilates: t.planoPilates ?? undefined,
+    musculacao: t.musculacao ?? undefined,
+    procedimento: t.procedimento ?? undefined,
+    valorPlano: t.valorPlano,
+    recebimentos: (t.recebimentos ?? []).map(recebimentoDtoToLocal),
+    createdAt: t.createdAt,
+  }
+}
+
 export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }: TratamentoFormProps) {
-  const store = useCadastroStore()
   const config = useConfig()
   const planoOptions = config.planosTratamento.map((p) => ({ value: p, label: p }))
-  const usedConsultaIds = useMemo(() => new Set(store.tratamentos.map((t) => t.consultaId)), [store.tratamentos])
 
-  const elegiveis = useMemo(() => store.consultas, [store.consultas])
+  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
+  const [empresaId, setEmpresaId] = useState<string>('')
+  const [leads, setLeads] = useState<LeadSummaryDto[]>([])
+  const [leadsLoading, setLeadsLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const [data, setData] = useState<FormState>(() =>
     editing
@@ -72,19 +109,105 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
     if (editing) setData(fromTratamento(editing))
   }, [editing])
 
-  const selectedConsulta: Consulta | null = useMemo(
-    () => store.consultas.find((c) => c.id === data.consultaId) ?? null,
-    [store.consultas, data.consultaId],
+  // Resolve empresa: usa a do lead da consulta de referência, senão pega a primeira do usuário.
+  useEffect(() => {
+    let cancelled = false
+    async function init() {
+      try {
+        const list = await empresasApi.list()
+        if (cancelled) return
+        setEmpresas(list)
+
+        const refConsultaId = editing?.consultaId ?? prefilledConsultaId
+        if (refConsultaId) {
+          // Pra descobrir a empresa, varremos as empresas até achar a consulta.
+          // Não há endpoint direto consulta→empresa, mas temos consultaId no LeadSummary.
+          for (const emp of list) {
+            try {
+              const resp = await leadsApi.list(emp.id, { pageSize: 500 })
+              if (cancelled) return
+              const found = resp.items.find((l) => l.consultaId === refConsultaId)
+              if (found) {
+                setEmpresaId(emp.id)
+                setLeads(resp.items)
+                return
+              }
+            } catch { /* tenta próxima */ }
+          }
+        }
+        setEmpresaId(list[0]?.id ?? '')
+      } catch (err) {
+        if (cancelled) return
+        setFeedback({
+          kind: 'error',
+          msg: err instanceof Error ? err.message : 'Erro ao carregar empresas.',
+        })
+      }
+    }
+    init()
+    return () => {
+      cancelled = true
+    }
+  }, [editing, prefilledConsultaId])
+
+  // Sempre que a empresa mudar (e ainda não temos os leads cacheados), recarrega.
+  useEffect(() => {
+    if (!empresaId) return
+    if (leads.length > 0 && leads[0]?.empresaId === empresaId) return
+    let cancelled = false
+    setLeadsLoading(true)
+    leadsApi
+      .list(empresaId, { pageSize: 500 })
+      .then((res) => {
+        if (cancelled) return
+        setLeads(res.items)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setFeedback({
+          kind: 'error',
+          msg: err instanceof Error ? err.message : 'Erro ao carregar consultas.',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setLeadsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresaId])
+
+  // Consultas elegíveis: leads que TÊM consulta. Se já tem tratamento, mostra desabilitado
+  // (exceto a consulta sendo editada).
+  const consultaOptions = useMemo(
+    () =>
+      leads
+        .filter((l) => l.temConsulta && l.consultaId)
+        .map((l) => {
+          const jaTem = l.temTratamento && l.consultaId !== editing?.consultaId
+          const orc = l.consultaOrcamento != null
+            ? `R$ ${Number(l.consultaOrcamento).toLocaleString('pt-BR')}`
+            : 'orçamento —'
+          return {
+            value: l.consultaId as string,
+            label: jaTem ? `${l.nome} · já tem tratamento` : l.nome,
+            subtitle: `orçamento ${orc}`,
+            disabled: jaTem,
+          }
+        }),
+    [leads, editing?.consultaId],
   )
-  const selectedLead: Lead | null = useMemo(
-    () => (selectedConsulta ? store.leads.find((l) => l.id === selectedConsulta.leadId) ?? null : null),
-    [store.leads, selectedConsulta],
+
+  const selectedLead = useMemo(
+    () => leads.find((l) => l.consultaId && l.consultaId === data.consultaId) ?? null,
+    [leads, data.consultaId],
   )
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setFeedback(null)
     if (!data.consultaId) {
@@ -95,23 +218,45 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
       setFeedback({ kind: 'error', msg: 'Tratamento aceita no máximo 6 recebimentos.' })
       return
     }
+
+    const payload: CreateTratamentoPayload = {
+      planoTratamento: data.planoTratamento,
+      planoPilates: data.planoPilates || undefined,
+      musculacao: data.musculacao || undefined,
+      procedimento: data.procedimento || undefined,
+      valorPlano: data.valorPlano,
+    }
+
+    setSubmitting(true)
     try {
-      const payload = {
-        consultaId: data.consultaId,
-        planoTratamento: data.planoTratamento,
-        planoPilates: data.planoPilates || undefined,
-        musculacao: data.musculacao || undefined,
-        procedimento: data.procedimento || undefined,
-        valorPlano: data.valorPlano,
-        recebimentos: data.recebimentos,
+      let dto: TratamentoDto
+      if (editing) {
+        dto = await tratamentosApi.update(editing.id, payload)
+        for (const old of dto.recebimentos ?? []) {
+          await recebimentosApi.delete(old.id)
+        }
+        for (const r of data.recebimentos) {
+          await recebimentosApi.createForTratamento(dto.id, r)
+        }
+      } else {
+        dto = await tratamentosApi.create(data.consultaId, payload)
+        for (const r of data.recebimentos) {
+          await recebimentosApi.createForTratamento(dto.id, r)
+        }
       }
-      const tratamento = editing
-        ? updateTratamento(editing.id, payload)
-        : addTratamento(payload)
-      if (!tratamento) {
-        setFeedback({ kind: 'error', msg: 'Não foi possível salvar o tratamento.' })
-        return
+
+      // Re-fetch via lead pra atualizar recebimentos no DTO local.
+      const lead = leads.find((l) => l.consultaId === dto.consultaId)
+      let tratamento: Tratamento = tratamentoDtoToLocal(dto)
+      if (lead) {
+        try {
+          const refreshed = await leadsApi.get(lead.id)
+          if (refreshed.consulta?.tratamento) {
+            tratamento = tratamentoDtoToLocal(refreshed.consulta.tratamento)
+          }
+        } catch { /* mantém o dto cru */ }
       }
+
       setFeedback({
         kind: 'success',
         msg: editing ? 'Tratamento atualizado com sucesso.' : 'Tratamento cadastrado com sucesso.',
@@ -121,12 +266,30 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
     } catch (err) {
       setFeedback({
         kind: 'error',
-        msg: err instanceof Error ? err.message : 'Erro inesperado ao cadastrar.',
+        msg: err instanceof Error ? err.message : 'Erro inesperado ao salvar tratamento.',
       })
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  if (elegiveis.length === 0 && !editing) {
+  if (!empresaId) {
+    return (
+      <CadastroFormShell
+        title={editing ? 'Editar Tratamento' : 'Cadastrar Tratamento'}
+        description="Carregando…"
+        icon={editing ? Pencil : HeartPulse}
+        accent="#34d399"
+        onBack={onBack}
+      >
+        <div className="text-center py-12 px-4 rounded-xl border border-dashed border-white/10 text-sm text-muted-foreground">
+          Carregando empresas…
+        </div>
+      </CadastroFormShell>
+    )
+  }
+
+  if (!editing && consultaOptions.length === 0 && !leadsLoading) {
     return (
       <CadastroFormShell
         title="Cadastrar Tratamento"
@@ -145,19 +308,6 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
     )
   }
 
-  const consultaOptions = elegiveis.map((c) => {
-    const lead = store.leads.find((l) => l.id === c.leadId)
-    const jaTemTratamento = usedConsultaIds.has(c.id) && c.id !== editing?.consultaId
-    const nomeLead = lead?.nome ?? 'Lead'
-    const orc = `R$ ${c.orcamento.toLocaleString('pt-BR')}`
-    return {
-      value: c.id,
-      label: jaTemTratamento ? `${nomeLead} · já tem tratamento` : nomeLead,
-      subtitle: `orçamento ${orc}`,
-      disabled: jaTemTratamento,
-    }
-  })
-
   return (
     <CadastroFormShell
       title={editing ? 'Editar Tratamento' : 'Cadastrar Tratamento'}
@@ -171,7 +321,22 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
       onBack={onBack}
     >
       <form onSubmit={handleSubmit} className="space-y-6">
-        {selectedLead && selectedConsulta ? (
+        {!editing && empresas.length > 1 && (
+          <SelectInput
+            label="Empresa"
+            value={empresaId}
+            onChange={(e) => {
+              setEmpresaId(e.target.value)
+              setData((prev) => ({ ...prev, consultaId: '' }))
+              setLeads([])
+            }}
+            options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
+            placeholder="Selecione a empresa…"
+            required
+          />
+        )}
+
+        {selectedLead ? (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -208,7 +373,9 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
                 <div>
                   <div className="text-xs text-muted-foreground">Orçamento</div>
                   <div className="font-medium text-foreground">
-                    R$ {selectedConsulta.orcamento.toLocaleString('pt-BR')}
+                    {selectedLead.consultaOrcamento != null
+                      ? `R$ ${Number(selectedLead.consultaOrcamento).toLocaleString('pt-BR')}`
+                      : '—'}
                   </div>
                 </div>
               </div>
@@ -220,7 +387,7 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
             value={data.consultaId}
             onChange={(v) => set('consultaId', v)}
             options={consultaOptions}
-            placeholder="Selecione uma consulta…"
+            placeholder={leadsLoading ? 'Carregando consultas…' : 'Selecione uma consulta…'}
             searchPlaceholder="Pesquisar pelo nome do lead…"
             required
             hint="Digite parte do nome do lead. As consultas marcadas como 'já tem tratamento' ficam desabilitadas."
@@ -307,9 +474,12 @@ export function TratamentoForm({ onBack, onSaved, prefilledConsultaId, editing }
           </button>
           <button
             type="submit"
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-[0_0_24px_rgba(52,211,153,0.35)] hover:from-emerald-300 hover:to-emerald-400 transition-all"
+            disabled={submitting}
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold text-[#0d0f14] bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-[0_0_24px_rgba(52,211,153,0.35)] hover:from-emerald-300 hover:to-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
           >
-            {editing ? 'Salvar alterações' : 'Cadastrar Tratamento'}
+            {submitting
+              ? (editing ? 'Salvando…' : 'Cadastrando…')
+              : (editing ? 'Salvar alterações' : 'Cadastrar Tratamento')}
           </button>
         </div>
       </form>

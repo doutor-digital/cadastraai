@@ -2,9 +2,9 @@
 
 import { memo, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users, RefreshCw, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users, RefreshCw, AlertTriangle, UploadCloud } from 'lucide-react'
 import { clearAllLocal, deleteLead, useCadastroStore } from '@/lib/cadastro-store'
-import { empresasApi, leadsApi, type EmpresaDto, type LeadSummaryDto } from '@/lib/api'
+import { empresasApi, leadsApi, type CreateLeadPayload, type EmpresaDto, type LeadSummaryDto } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
 
@@ -68,6 +68,8 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refetchTick, setRefetchTick] = useState(0)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
 
   // Debounce do search
   useEffect(() => {
@@ -147,6 +149,54 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
     deleteLead(lead.id)
   }
 
+  const handleSyncLocal = async () => {
+    if (!empresaId || syncing || localStore.leads.length === 0) return
+    const empresaNome = empresas.find((e) => e.id === empresaId)?.nome ?? 'a empresa selecionada'
+    if (!confirm(
+      `Subir ${localStore.leads.length} lead(s) local(is) para "${empresaNome}"?\n\nObs.: consultas e tratamentos vinculados em localStorage NÃO serão sincronizados (são reentradas manuais).`,
+    )) return
+
+    const payload: CreateLeadPayload[] = localStore.leads.map((l) => ({
+      nome: l.nome,
+      telefone: l.telefone,
+      origem: l.origem,
+      tipo: l.tipo,
+      tipoResgate: l.tipoResgate,
+      interacao: l.interacao,
+      agendouConsulta: l.agendouConsulta,
+      pagamentoAntecipado: l.pagamentoAntecipado,
+      dataAgendamento: l.dataAgendamento,
+      motivoNaoAgendamento: l.motivoNaoAgendamento,
+      nomeResponsavel: l.nomeResponsavel,
+      createdAt: l.createdAt,
+    }))
+
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await leadsApi.bulkCreate(empresaId, payload)
+      const ok = res.createdCount === payload.length
+      setSyncResult({
+        kind: ok ? 'success' : 'error',
+        msg: ok
+          ? `${res.createdCount} lead(s) sincronizado(s). Limpando o localStorage…`
+          : `${res.createdCount} de ${res.totalReceived} sincronizados. ${res.failedCount} falharam — verifique no console.`,
+      })
+      if (res.failed.length > 0) console.warn('Falhas no sync:', res.failed)
+      if (ok) {
+        clearAllLocal()
+        setRefetchTick((t) => t + 1)
+      }
+    } catch (err) {
+      setSyncResult({
+        kind: 'error',
+        msg: err instanceof Error ? err.message : 'Falha ao sincronizar.',
+      })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const totalDisplay = total + (showLocal ? localLeads.length : 0)
 
   return (
@@ -212,8 +262,24 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span className="flex-1 min-w-0">
             <strong>{localStore.leads.length}</strong> lead{localStore.leads.length === 1 ? '' : 's'} local{localStore.leads.length === 1 ? '' : 'is'} no navegador (não estão no servidor).
-            {' '}Isso explica se a contagem do front não bate com o backend.
+            {' '}Outros usuários não conseguem ver. Sincronize agora pra subir tudo.
           </span>
+          {syncResult && (
+            <span className={cn(
+              'w-full text-[12px] mt-1',
+              syncResult.kind === 'success' ? 'text-emerald-200' : 'text-rose-200',
+            )}>
+              {syncResult.msg}
+            </span>
+          )}
+          <button
+            onClick={handleSyncLocal}
+            disabled={syncing || !empresaId}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-100 text-[12px] font-semibold hover:bg-cyan-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <UploadCloud className="h-3.5 w-3.5" />
+            {syncing ? 'Sincronizando…' : 'Sincronizar com servidor'}
+          </button>
           <button
             onClick={() => {
               if (!confirm(`Apagar os ${localStore.leads.length} leads locais (e consultas/tratamentos não sincronizados) deste navegador? Os dados no servidor não são afetados.`)) return

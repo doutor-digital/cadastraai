@@ -304,6 +304,9 @@ export interface LeadSummaryDto {
   compareceu?: boolean | null
   fechouTratamento?: boolean | null
   motivoNaoFechamento?: string | null
+  consultaId?: string | null
+  temTratamento: boolean
+  consultaOrcamento?: number | null
 }
 
 export interface LeadDetailDto {
