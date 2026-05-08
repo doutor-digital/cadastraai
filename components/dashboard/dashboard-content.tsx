@@ -16,6 +16,8 @@ import { ImportView } from '@/components/cadastro/import-view'
 import { ImportadosView } from '@/components/cadastro/importados-view'
 import { RelatoriosView } from '@/components/cadastro/relatorios-view'
 import { ConfigView } from '@/components/cadastro/config-view'
+import { ProfileView } from '@/components/dashboard/profile-view'
+import { useAuth } from '@/contexts/auth-context'
 import { useCadastroStore } from '@/lib/cadastro-store'
 import type { Consulta, Lead, Tratamento } from '@/types'
 
@@ -32,6 +34,7 @@ const validViews: DashboardView[] = [
   'importados',
   'relatorios',
   'config',
+  'perfil',
 ]
 
 function isValidView(value: string | null): value is DashboardView {
@@ -67,6 +70,12 @@ export function DashboardContent() {
   const [editingTratamento, setEditingTratamento] = useState<Tratamento | null>(null)
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null)
   const store = useCadastroStore()
+  const { logout } = useAuth()
+
+  const handleLogout = async () => {
+    await logout()
+    router.push('/login')
+  }
 
   // Mantém o estado interno em sync com URL (navegação via voltar/avançar do browser).
   useEffect(() => {
@@ -265,6 +274,7 @@ export function DashboardContent() {
             {view === 'importados' && <ImportadosView onBack={goDashboard} />}
             {view === 'relatorios' && <RelatoriosView onBack={goDashboard} />}
             {view === 'config' && <ConfigView onBack={goDashboard} />}
+            {view === 'perfil' && <ProfileView onBack={goDashboard} onLogout={handleLogout} />}
           </motion.div>
         </AnimatePresence>
       </div>

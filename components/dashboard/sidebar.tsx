@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
 import { useStoreCounts, useIsClient } from '@/lib/cadastro-store'
 import { AvatarCircle } from '@/components/ui/avatar-circle'
-import { ProfileDialog } from '@/components/dashboard/profile-dialog'
 
 export type DashboardView =
   | 'dashboard'
@@ -34,6 +33,7 @@ export type DashboardView =
   | 'importados'
   | 'relatorios'
   | 'config'
+  | 'perfil'
 
 interface SidebarItem {
   id: DashboardView
@@ -60,7 +60,6 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const [profileOpen, setProfileOpen] = useState(false)
   const counts = useStoreCounts()
   const isClient = useIsClient()
   const { logout, user } = useAuth()
@@ -246,10 +245,12 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
         {/* Footer */}
         <div className="pt-3 mt-2 border-t border-white/6">
           <button
-            onClick={() => setProfileOpen(true)}
+            onClick={() => onChange('perfil')}
             title={collapsed ? 'Ver perfil' : 'Ver detalhes do perfil'}
+            aria-current={active === 'perfil' ? 'page' : undefined}
             className={cn(
               'group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-2xl hover:bg-white/[0.04] transition-colors text-left',
+              active === 'perfil' && 'bg-white/[0.05]',
               collapsed && 'justify-center',
             )}
           >
@@ -297,12 +298,6 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
           </button>
         </div>
       </div>
-
-      <ProfileDialog
-        open={profileOpen}
-        onClose={() => setProfileOpen(false)}
-        onLogout={handleLogout}
-      />
     </aside>
   )
 }
