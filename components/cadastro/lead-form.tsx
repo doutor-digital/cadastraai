@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { UserPlus, CheckCircle2, AlertCircle, Pencil } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
-import { TextInput, SelectInput, TextareaInput, Segmented, ToggleSwitch } from './form-fields'
+import { TextInput, SelectInput, Segmented, ToggleSwitch } from './form-fields'
 import { addLead, updateLead } from '@/lib/cadastro-store'
 import { useConfig } from '@/lib/config-store'
 import type { Lead, LeadFormData } from '@/types'
+import { MOTIVOS_NAO_AGENDAMENTO } from '@/types'
 
 interface LeadFormProps {
   onBack: () => void
@@ -103,8 +104,34 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
     : 'Cadastro Geral — registre um novo lead e o status do primeiro contato.'
   const Icon = editing ? Pencil : UserPlus
 
+  // Hero específico do CADASTRO MANUAL — diferencia visualmente da importação em massa.
+  const manualHero = (
+    <div
+      className="rounded-3xl p-7 mb-5 text-cyan-50 ring-2 ring-cyan-300/40 shadow-[0_0_0_4px_rgba(34,211,238,0.06)]"
+      style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #0e7490 55%, #075985 100%)' }}
+    >
+      <div className="flex items-start gap-4">
+        <div className="h-12 w-12 rounded-2xl bg-white/15 grid place-items-center shrink-0">
+          <Icon className="h-6 w-6 text-white" strokeWidth={2.2} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <span className="inline-flex items-center gap-1.5 px-2 h-5 rounded-md bg-white/20 text-[10px] font-bold uppercase tracking-[0.2em] text-white mb-2">
+            Modo: cadastro manual
+          </span>
+          <h1 className="text-[28px] font-bold tracking-tight leading-none">{title}</h1>
+          <p className="text-[13px] text-cyan-100/95 mt-2 leading-relaxed">
+            Registro <strong className="text-white">individual</strong>, um lead por vez. Este lead será marcado como <strong className="text-white">&quot;MANUAL&quot;</strong>.
+          </p>
+          <p className="text-[12px] text-cyan-100/85 mt-1.5">
+            Para subir vários leads de uma planilha CSV, use o menu <strong>“Importar Planilha”</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
-    <CadastroFormShell title={title} description={description} icon={Icon} onBack={onBack}>
+    <CadastroFormShell title={title} description={description} icon={Icon} onBack={onBack} hero={editing ? undefined : manualHero}>
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <TextInput
@@ -204,11 +231,12 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
           </motion.div>
         ) : (
           <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
-            <TextareaInput
+            <SelectInput
               label="Motivo do não agendamento"
-              placeholder="Descreva o motivo…"
+              placeholder="Selecione o motivo…"
               value={data.motivoNaoAgendamento ?? ''}
               onChange={(e) => set('motivoNaoAgendamento', e.target.value)}
+              options={MOTIVOS_NAO_AGENDAMENTO.map((m) => ({ value: m, label: m }))}
               required
             />
           </motion.div>

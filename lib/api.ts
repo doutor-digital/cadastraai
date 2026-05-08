@@ -299,6 +299,7 @@ export interface LeadSummaryDto {
   motivoNaoAgendamento?: string | null
   nomeResponsavel: string
   createdAt: string
+  importado: boolean
   temConsulta: boolean
   compareceu?: boolean | null
   fechouTratamento?: boolean | null
@@ -320,6 +321,7 @@ export interface LeadDetailDto {
   motivoNaoAgendamento?: string | null
   nomeResponsavel: string
   createdAt: string
+  importado: boolean
   consulta?: ConsultaDto | null
 }
 
@@ -397,11 +399,14 @@ export interface PaginatedLeads {
   pageSize: number
 }
 
+export type FonteFiltro = 'manual' | 'importado'
+
 export interface ListLeadsParams {
   page?: number
   pageSize?: number
   search?: string
   status?: 'todos' | 'agendados' | 'nao_agendados'
+  fonte?: FonteFiltro
 }
 
 export interface LeadsStatsPeriod {
@@ -412,6 +417,8 @@ export interface LeadsStatsPeriod {
   fecharam: number
   cadastros: number
   resgates: number
+  leadsManuais: number
+  leadsImportados: number
 }
 
 export interface OrigemBucket {
@@ -438,6 +445,7 @@ export interface StatsParams {
   to?: string
   prevFrom?: string
   prevTo?: string
+  fonte?: FonteFiltro
 }
 
 // ----- Leads -----
@@ -448,6 +456,7 @@ export const leadsApi = {
     if (params.pageSize !== undefined) q.pageSize = String(params.pageSize)
     if (params.search) q.search = params.search
     if (params.status && params.status !== 'todos') q.status = params.status
+    if (params.fonte) q.fonte = params.fonte
     return api.get<PaginatedLeads>(`/api/empresas/${empresaId}/leads`, q)
   },
   stats: (empresaId: string, params: StatsParams) => {
@@ -456,6 +465,7 @@ export const leadsApi = {
     if (params.to) q.to = params.to
     if (params.prevFrom) q.prevFrom = params.prevFrom
     if (params.prevTo) q.prevTo = params.prevTo
+    if (params.fonte) q.fonte = params.fonte
     return api.get<LeadsStatsResponse>(`/api/empresas/${empresaId}/leads/stats`, q)
   },
   get: (leadId: string) => api.get<LeadDetailDto>(`/api/leads/${leadId}`),
@@ -466,6 +476,14 @@ export const leadsApi = {
   update: (leadId: string, data: UpdateLeadPayload) =>
     api.patch<LeadDetailDto>(`/api/leads/${leadId}`, data),
   delete: (leadId: string) => api.delete<void>(`/api/leads/${leadId}`),
+  bulkDelete: (empresaId: string, opts: { fonte?: FonteFiltro } = {}) => {
+    const q: Record<string, string> = { confirm: 'APAGAR' }
+    if (opts.fonte) q.fonte = opts.fonte
+    return api.request<{ deleted: number }>(
+      `/api/empresas/${empresaId}/leads`,
+      { method: 'DELETE', params: q },
+    )
+  },
 }
 
 // ----- Consultas -----

@@ -23,6 +23,7 @@ function fromSummary(s: ApiLeadSummary): Lead {
     motivoNaoAgendamento: s.motivoNaoAgendamento ?? undefined,
     nomeResponsavel: s.nomeResponsavel,
     createdAt: s.createdAt,
+    importado: s.importado,
   }
 }
 

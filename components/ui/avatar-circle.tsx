@@ -50,11 +50,13 @@ export function AvatarCircle({
           className="h-full w-full object-cover"
         />
       ) : (
+        // Auth state vem do localStorage — name/email só existem após mount no cliente.
+        // Renderizamos a letra só após montar para evitar mismatch de hydration.
         <span
           className="font-bold text-[#081420]"
           style={{ fontSize: Math.round(size * 0.4) }}
         >
-          {initial}
+          {mounted ? initial : ''}
         </span>
       )}
     </span>

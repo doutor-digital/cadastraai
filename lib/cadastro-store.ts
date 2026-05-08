@@ -274,6 +274,15 @@ export function deleteTratamento(id: string) {
   emit()
 }
 
+/// Limpa TODO o estado local (leads, consultas, tratamentos) — usar quando a fonte de verdade
+/// é o backend e o localStorage está mostrando registros antigos que nunca subiram pra API.
+export function clearAllLocal() {
+  ensureInit()
+  memoryState = emptyState
+  persist(memoryState)
+  emit()
+}
+
 export function useCadastroStore(): StoreState {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

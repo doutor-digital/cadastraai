@@ -415,20 +415,25 @@ export function ImportView({ onBack }: ImportViewProps) {
         )}
       </div>
 
-      {/* Hero */}
+      {/* Hero — IMPORTAÇÃO EM MASSA (cor âmbar para diferenciar de cadastro manual) */}
       <div
-        className="rounded-3xl p-7 mb-5 text-cyan-50"
-        style={{ background: 'linear-gradient(135deg, #06b6d4 0%, #0e7490 60%, #075985 100%)' }}
+        className="rounded-3xl p-7 mb-5 text-amber-50 ring-2 ring-amber-300/40 shadow-[0_0_0_4px_rgba(251,191,36,0.06)]"
+        style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 55%, #92400e 100%)' }}
       >
-        <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-white/15 grid place-items-center">
+        <div className="flex items-start gap-4">
+          <div className="h-12 w-12 rounded-2xl bg-white/20 grid place-items-center shrink-0">
             <FileSpreadsheet className="h-6 w-6 text-white" />
           </div>
-          <div>
-            <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Avançado</p>
+          <div className="flex-1 min-w-0">
+            <span className="inline-flex items-center gap-1.5 px-2 h-5 rounded-md bg-white/20 text-[10px] font-bold uppercase tracking-[0.2em] text-white mb-2">
+              Modo: importação em massa
+            </span>
             <h1 className="text-[28px] font-bold tracking-tight leading-none">Importar Planilha</h1>
-            <p className="text-[13px] text-cyan-100/85 mt-2">
-              Suba um CSV para cadastrar leads em massa. Cabeçalhos compatíveis são detectados automaticamente.
+            <p className="text-[13px] text-amber-50/95 mt-2 leading-relaxed">
+              Esta tela é só para subir CSV. <strong className="text-white">Todos os leads enviados aqui serão marcados como &quot;IMPORTADOS&quot;</strong> e ficam separados dos cadastros manuais.
+            </p>
+            <p className="text-[12px] text-amber-100/85 mt-1.5">
+              Para cadastrar UM lead a mão, use o menu <strong>“Novo Lead”</strong>.
             </p>
           </div>
         </div>

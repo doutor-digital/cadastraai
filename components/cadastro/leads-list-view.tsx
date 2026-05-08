@@ -2,8 +2,8 @@
 
 import { memo, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users } from 'lucide-react'
-import { deleteLead, useCadastroStore } from '@/lib/cadastro-store'
+import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users, RefreshCw, AlertTriangle } from 'lucide-react'
+import { clearAllLocal, deleteLead, useCadastroStore } from '@/lib/cadastro-store'
 import { empresasApi, leadsApi, type EmpresaDto, type LeadSummaryDto } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
@@ -51,6 +51,7 @@ function summaryToLead(s: LeadSummaryDto): Lead {
     motivoNaoAgendamento: s.motivoNaoAgendamento ?? undefined,
     nomeResponsavel: s.nomeResponsavel,
     createdAt: s.createdAt,
+    importado: s.importado,
   }
 }
 
@@ -66,6 +67,7 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refetchTick, setRefetchTick] = useState(0)
 
   // Debounce do search
   useEffect(() => {
@@ -110,6 +112,7 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
         pageSize: PAGE_SIZE,
         search: debouncedQuery || undefined,
         status: statusFilter,
+        fonte: 'manual',
       })
       .then((resp) => {
         if (myReqId !== reqIdRef.current) return
@@ -125,7 +128,7 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
       .finally(() => {
         if (myReqId === reqIdRef.current) setLoading(false)
       })
-  }, [empresaId, page, debouncedQuery, statusFilter])
+  }, [empresaId, page, debouncedQuery, statusFilter, refetchTick])
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const safePage = Math.min(page, Math.max(0, totalPages - 1))
@@ -172,25 +175,58 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
             <Users className="h-6 w-6 text-white" />
           </div>
           <div className="flex-1">
-            <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Cadastros</p>
+            <p className="text-[12px] uppercase tracking-[0.2em] text-cyan-100/85 mb-1">Cadastros manuais</p>
             <h1 className="text-[28px] font-bold tracking-tight leading-none">
               Leads ({loading && total === 0 ? '…' : totalDisplay})
             </h1>
             <p className="text-[13px] text-cyan-100/85 mt-2">
               {error
                 ? `Falha ao consultar o servidor — ${error}`
-                : 'Gerencie, edite e remova os leads cadastrados.'}
+                : 'Leads cadastrados manualmente. Para ver os importados, acesse "Importados" no menu.'}
             </p>
           </div>
-          <button
-            onClick={onCreateNew}
-            className="inline-flex items-center gap-2 h-11 px-5 rounded-2xl bg-white text-cyan-700 font-semibold text-[13px] hover:bg-cyan-50 transition-colors"
-          >
-            <UserPlus className="h-4 w-4" />
-            Novo Lead
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setRefetchTick((t) => t + 1)}
+              disabled={loading || !empresaId}
+              title="Atualizar a lista com os dados mais recentes do servidor"
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-2xl bg-white/15 hover:bg-white/25 text-white font-semibold text-[13px] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              {loading ? 'Sincronizando…' : 'Sincronizar'}
+            </button>
+            <button
+              onClick={onCreateNew}
+              className="inline-flex items-center gap-2 h-11 px-5 rounded-2xl bg-white text-cyan-700 font-semibold text-[13px] hover:bg-cyan-50 transition-colors"
+            >
+              <UserPlus className="h-4 w-4" />
+              Novo Lead
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Aviso de leads locais (localStorage) que não estão sincronizados com a API */}
+      {localStore.leads.length > 0 && (
+        <div className="rounded-2xl bg-amber-500/[0.08] border border-amber-400/30 text-amber-200 text-[13px] px-4 py-3 mb-4 flex flex-wrap items-center gap-3">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="flex-1 min-w-0">
+            <strong>{localStore.leads.length}</strong> lead{localStore.leads.length === 1 ? '' : 's'} local{localStore.leads.length === 1 ? '' : 'is'} no navegador (não estão no servidor).
+            {' '}Isso explica se a contagem do front não bate com o backend.
+          </span>
+          <button
+            onClick={() => {
+              if (!confirm(`Apagar os ${localStore.leads.length} leads locais (e consultas/tratamentos não sincronizados) deste navegador? Os dados no servidor não são afetados.`)) return
+              clearAllLocal()
+              setRefetchTick((t) => t + 1)
+            }}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-100 text-[12px] font-semibold hover:bg-amber-500/30 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Limpar local
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-4 flex flex-wrap items-center gap-3 mb-4">

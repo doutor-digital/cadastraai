@@ -39,8 +39,13 @@ export interface Lead {
   motivoNaoAgendamento?: string
   nomeResponsavel: string
   createdAt: string
+  // true = veio de importação em massa; false/undefined = cadastro manual.
+  importado?: boolean
   consulta?: Consulta
 }
+
+// Fonte do lead — usado como filtro nas listagens e no dashboard.
+export type FonteLead = 'manual' | 'importado'
 
 // Prisma Schema Types - Consulta (Consulta Comparecida)
 export interface Consulta {
@@ -70,6 +75,25 @@ export interface MotivoNaoFechamento {
   isDefault: boolean
   createdAt: string
 }
+
+// Lista fechada de motivos para "não agendou consulta" — usada no lead-form como dropdown.
+export const MOTIVOS_NAO_AGENDAMENTO: string[] = [
+  'Sem interação',
+  'Não deu continuidade ao atendimento',
+  'Atendimento por plano de saúde',
+  'Atendimento para terceiros',
+  'Sem condições financeiras',
+  'Vai se organizar financeiramente',
+  'Busca apenas laudo médico',
+  'Interesse apenas em pilates',
+  'Interesse apenas em liberação miofascial',
+  'Mora +50km',
+  'Sem interesse',
+  'Clicou por engano',
+  'Busca outro tipo de tratamento',
+  'Outra patologia',
+  'Em viagem no momento',
+]
 
 // Lista padrão usada no fluxo local (offline / demo) — espelha o seed do backend.
 export const MOTIVOS_NAO_FECHAMENTO_DEFAULT: { nome: string; cor: CorSemaforo }[] = [
@@ -227,7 +251,7 @@ export interface DashboardStats {
 
 // Filtros do Dashboard
 export interface DashboardFilters {
-  periodo: 'hoje' | 'ontem' | 'semana' | 'mes' | 'trimestre' | 'customizado'
+  periodo: 'hoje' | 'ontem' | 'semana' | 'mes' | 'trimestre' | 'tudo' | 'customizado'
   dataInicio?: string
   dataFim?: string
   responsavel?: string[]

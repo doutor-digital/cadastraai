@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { DashboardSidebar, type DashboardView } from '@/components/dashboard/sidebar'
 import { DashboardView as DashboardHomeView } from '@/components/dashboard/dashboard-view'
@@ -38,10 +38,28 @@ function isValidView(value: string | null): value is DashboardView {
   return value !== null && (validViews as string[]).includes(value)
 }
 
+// Views que possuem rota dedicada (URL própria). As demais permanecem internas em /dashboard.
+const PATH_TO_VIEW: Record<string, DashboardView> = {
+  '/leads': 'leads-list',
+  '/importados': 'importados',
+}
+const VIEW_TO_PATH: Partial<Record<DashboardView, string>> = {
+  'leads-list': '/leads',
+  importados: '/importados',
+}
+
+function viewFromLocation(pathname: string, searchView: string | null): DashboardView {
+  if (PATH_TO_VIEW[pathname]) return PATH_TO_VIEW[pathname]
+  if (isValidView(searchView)) return searchView
+  return 'dashboard'
+}
+
 export function DashboardContent() {
   const params = useSearchParams()
-  const initial = params.get('view')
-  const [view, setView] = useState<DashboardView>(isValidView(initial) ? initial : 'dashboard')
+  const pathname = usePathname()
+  const router = useRouter()
+  const initial = viewFromLocation(pathname, params.get('view'))
+  const [view, setView] = useState<DashboardView>(initial)
   const [chainedLeadId, setChainedLeadId] = useState<string | null>(null)
   const [chainedConsultaId, setChainedConsultaId] = useState<string | null>(null)
   const [editingLead, setEditingLead] = useState<Lead | null>(null)
@@ -50,11 +68,20 @@ export function DashboardContent() {
   const [detailLeadId, setDetailLeadId] = useState<string | null>(null)
   const store = useCadastroStore()
 
+  // Mantém o estado interno em sync com URL (navegação via voltar/avançar do browser).
   useEffect(() => {
-    const next = params.get('view')
-    if (isValidView(next) && next !== view) setView(next)
+    const next = viewFromLocation(pathname, params.get('view'))
+    if (next !== view) setView(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+  }, [pathname, params])
+
+  // Empurra a URL apropriada para a view. Views com rota dedicada usam pathname próprio,
+  // as demais ficam em /dashboard?view=<id>.
+  const navigateTo = (v: DashboardView) => {
+    const dedicated = VIEW_TO_PATH[v]
+    const target = dedicated ?? (v === 'dashboard' ? '/dashboard' : `/dashboard?view=${v}`)
+    router.push(target)
+  }
 
   const goDashboard = () => {
     setChainedLeadId(null)
@@ -64,6 +91,7 @@ export function DashboardContent() {
     setEditingTratamento(null)
     setDetailLeadId(null)
     setView('dashboard')
+    if (pathname !== '/dashboard') router.push('/dashboard')
   }
 
   const handleNavigate = (v: DashboardView) => {
@@ -74,6 +102,7 @@ export function DashboardContent() {
     if (v !== 'tratamento') setEditingTratamento(null)
     if (v !== 'lead-detail') setDetailLeadId(null)
     setView(v)
+    navigateTo(v)
   }
 
   const handleEditConsulta = (consulta: Consulta) => {

@@ -38,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="pt-BR" className={`${rubik.variable} ${poppins.variable} ${openSans.variable}`}>
+    <html lang="pt-BR" suppressHydrationWarning className={`${rubik.variable} ${poppins.variable} ${openSans.variable}`}>
       <body className="font-sans antialiased bg-background">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

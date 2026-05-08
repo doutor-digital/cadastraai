@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { DashboardHeader } from '@/components/dashboard/header'
+import { DashboardHeader, type DashboardFonte } from '@/components/dashboard/header'
 import { useCadastroStore, useIsClient } from '@/lib/cadastro-store'
 import { empresasApi, leadsApi, type EmpresaDto, type LeadsStatsResponse } from '@/lib/api'
 import { AnimatedNumber } from '@/components/ui/animated-number'
@@ -21,6 +21,7 @@ function periodWindow(periodo: DashboardFilters['periodo']) {
     case 'semana':     return { startMs: todayMs - 6 * dayMs,    prevStartMs: todayMs - 13 * dayMs,      prevEndMs: todayMs - 6 * dayMs }
     case 'mes':        return { startMs: todayMs - 29 * dayMs,   prevStartMs: todayMs - 59 * dayMs,      prevEndMs: todayMs - 29 * dayMs }
     case 'trimestre':  return { startMs: todayMs - 89 * dayMs,   prevStartMs: todayMs - 179 * dayMs,     prevEndMs: todayMs - 89 * dayMs }
+    case 'tudo':       return { startMs: 0,                       prevStartMs: 0,                          prevEndMs: 0 }
     default:           return { startMs: 0,                       prevStartMs: 0,                          prevEndMs: Date.now() }
   }
 }
@@ -55,6 +56,8 @@ function deltaPct(curr: number, prev: number): { value: string; positive: boolea
 interface Computed {
   leads: number
   prevLeads: number
+  leadsManuais: number
+  leadsImportados: number
   agendados: number
   consultas: number
   prevConsultas: number
@@ -74,6 +77,8 @@ interface Computed {
 interface ApiAggregated {
   leads: number
   prevLeads: number
+  leadsManuais: number
+  leadsImportados: number
   agendados: number
   consultas: number
   prevConsultas: number
@@ -87,7 +92,9 @@ interface ApiAggregated {
 
 function emptyApiAggregated(): ApiAggregated {
   return {
-    leads: 0, prevLeads: 0, agendados: 0,
+    leads: 0, prevLeads: 0,
+    leadsManuais: 0, leadsImportados: 0,
+    agendados: 0,
     consultas: 0, prevConsultas: 0,
     comparecidas: 0, prevComparecidas: 0,
     tratamentos: 0, prevTratamentos: 0,
@@ -101,6 +108,8 @@ function aggregateStats(stats: LeadsStatsResponse[]): ApiAggregated {
   const responsaveisMap = new Map<string, { leads: number; fechados: number }>()
   for (const s of stats) {
     out.leads += s.current.leads
+    out.leadsManuais += s.current.leadsManuais
+    out.leadsImportados += s.current.leadsImportados
     out.agendados += s.current.agendados
     out.consultas += s.current.comConsulta
     out.comparecidas += s.current.compareceram
@@ -187,6 +196,7 @@ function computeLocal(
 
 export function DashboardView() {
   const [filters, setFilters] = useState<DashboardFilters>({ periodo: 'mes' })
+  const [fonte, setFonte] = useState<DashboardFonte>('todos')
   const [tickNow, setTickNow] = useState(() => Date.now())
   const store = useCadastroStore()
   const isClient = useIsClient()
@@ -218,9 +228,16 @@ export function DashboardView() {
     const toIso = new Date().toISOString()
     const prevFromIso = new Date(win.prevStartMs).toISOString()
     const prevToIso = new Date(win.prevEndMs).toISOString()
+    const fonteParam = fonte === 'todos' ? undefined : fonte
     Promise.all(
       empresas.map((e) =>
-        leadsApi.stats(e.id, { from: fromIso, to: toIso, prevFrom: prevFromIso, prevTo: prevToIso }),
+        leadsApi.stats(e.id, {
+          from: fromIso,
+          to: toIso,
+          prevFrom: prevFromIso,
+          prevTo: prevToIso,
+          fonte: fonteParam,
+        }),
       ),
     )
       .then((results) => {
@@ -234,12 +251,14 @@ export function DashboardView() {
       .finally(() => {
         if (myReqId === reqIdRef.current) setStatsLoading(false)
       })
-  }, [empresas, win, isClient])
+  }, [empresas, win, isClient, fonte])
 
   const m = useMemo<Computed>(() => {
     if (!isClient) {
       return {
-        leads: 0, prevLeads: 0, agendados: 0,
+        leads: 0, prevLeads: 0,
+        leadsManuais: 0, leadsImportados: 0,
+        agendados: 0,
         consultas: 0, prevConsultas: 0,
         comparecidas: 0, prevComparecidas: 0,
         tratamentos: 0, prevTratamentos: 0,
@@ -254,6 +273,8 @@ export function DashboardView() {
     return {
       leads: apiAgg.leads,
       prevLeads: apiAgg.prevLeads,
+      leadsManuais: apiAgg.leadsManuais,
+      leadsImportados: apiAgg.leadsImportados,
       agendados: apiAgg.agendados,
       consultas: apiAgg.consultas + local.consultas,
       prevConsultas: apiAgg.prevConsultas + local.prevConsultas,
@@ -280,7 +301,12 @@ export function DashboardView() {
 
   return (
     <div className="min-h-full">
-      <DashboardHeader filters={filters} onFilterChange={(next) => setFilters((p) => ({ ...p, ...next }))} />
+      <DashboardHeader
+        filters={filters}
+        onFilterChange={(next) => setFilters((p) => ({ ...p, ...next }))}
+        fonte={fonte}
+        onFonteChange={setFonte}
+      />
 
       <main className="px-4 md:px-8 py-6 md:py-8 max-w-[1280px] mx-auto">
         <motion.div
@@ -313,14 +339,26 @@ export function DashboardView() {
 
           {/* Leads */}
           <div className="col-span-2 row-span-1 rounded-3xl bg-[#15171b] border border-white/[0.05] p-6 flex flex-col justify-between">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Leads</p>
+            <div className="flex items-baseline justify-between">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">Leads</p>
+              <p className={`text-[11px] tabular-nums ${dLeads.positive ? 'text-cyan-400' : 'text-rose-400'}`}>
+                {dLeads.value}
+              </p>
+            </div>
             <div>
               <p className="text-[40px] font-bold tabular-nums leading-none">
                 <AnimatedNumber value={m.leads} />
               </p>
-              <p className={`text-[11px] mt-2 tabular-nums ${dLeads.positive ? 'text-cyan-400' : 'text-rose-400'}`}>
-                {dLeads.value} vs anterior
-              </p>
+              <div className="flex items-center gap-3 mt-2 text-[11px] tabular-nums">
+                <span className="inline-flex items-center gap-1 text-cyan-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                  {m.leadsManuais} manuais
+                </span>
+                <span className="inline-flex items-center gap-1 text-amber-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  {m.leadsImportados} importados
+                </span>
+              </div>
             </div>
           </div>
 

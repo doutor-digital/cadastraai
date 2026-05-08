@@ -8,13 +8,17 @@ import {
   Download,
   FileText,
   Filter,
+  Image as ImageIcon,
   RotateCcw,
   Settings,
   Share2,
   Smartphone,
   Sparkles,
   Check,
+  Loader2,
 } from 'lucide-react'
+import { toPng } from 'html-to-image'
+import { DashboardView } from '@/components/dashboard/dashboard-view'
 import { useCadastroStore } from '@/lib/cadastro-store'
 import { useMergedLeads } from '@/lib/leads-merged'
 import { empresasApi, type EmpresaDto } from '@/lib/api'
@@ -132,7 +136,10 @@ export function RelatoriosView({ onBack }: Props) {
   const { leads, apiSummaries, loading, error } = useMergedLeads()
   const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
   const [copied, setCopied] = useState(false)
+  const [capturing, setCapturing] = useState(false)
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null)
   const previewRef = useRef<HTMLPreElement>(null)
+  const dashboardRef = useRef<HTMLDivElement>(null)
 
   const [cfg, setCfg] = useState<ReportConfig>({
     empresaId: '',
@@ -225,9 +232,130 @@ export function RelatoriosView({ onBack }: Props) {
     }
   }
 
-  const handleShareWhatsApp = () => {
-    const url = `https://wa.me/?text=${encodeURIComponent(reportText)}`
-    window.open(url, '_blank', 'noopener,noreferrer')
+  // Abre o WhatsApp e garante que o texto esteja no clipboard pra colar.
+  // Não passamos o texto via wa.me?text= porque a URL fica longa demais com emojis
+  // (cada emoji vira 12 bytes URL-encoded) e o WhatsApp trunca, corrompendo emojis em "?".
+  const openWhatsAppWithClipboard = async (text: string): Promise<boolean> => {
+    let copiedToClipboard = false
+    try {
+      await navigator.clipboard.writeText(text)
+      copiedToClipboard = true
+    } catch {
+      // alguns browsers bloqueiam clipboard sem gesture — segue o fluxo
+    }
+    window.open('https://wa.me/', '_blank', 'noopener,noreferrer')
+    return copiedToClipboard
+  }
+
+  const handleShareWhatsApp = async () => {
+    const ok = await openWhatsAppWithClipboard(reportText)
+    setCaptureMsg(
+      ok
+        ? 'Texto copiado pro clipboard. Cole na conversa do WhatsApp (Ctrl+V / colar).'
+        : 'WhatsApp aberto. Volte e clique "Copiar texto" pra colar a mensagem.',
+    )
+  }
+
+  // Captura visual do dashboard como PNG via html-to-image. Roda contra o ref do
+  // wrapper que envolve <DashboardView /> abaixo. Retorna um Blob — o caller decide
+  // se faz download, anexa via Web Share, ou copia pra clipboard.
+  const captureDashboard = async (): Promise<Blob | null> => {
+    if (!dashboardRef.current) return null
+    try {
+      const dataUrl = await toPng(dashboardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: '#0c0d10',
+        // recharts usa SVGs internos; html-to-image cuida disso nativamente.
+        // Foreign objects podem ter problemas de fonte — embedFonts garante consistência.
+        skipFonts: false,
+      })
+      const resp = await fetch(dataUrl)
+      return await resp.blob()
+    } catch {
+      return null
+    }
+  }
+
+  const fileNameBase = `dashboard-${cfg.empresaNome.replace(/\s+/g, '-').toLowerCase() || 'empresa'}-${new Date().toISOString().slice(0, 10)}`
+
+  const handleDownloadImage = async () => {
+    setCapturing(true)
+    setCaptureMsg(null)
+    try {
+      const blob = await captureDashboard()
+      if (!blob) {
+        setCaptureMsg('Falha ao capturar o dashboard. Verifique se ele apareceu abaixo.')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${fileNameBase}.png`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setCaptureMsg('Imagem do dashboard baixada.')
+    } finally {
+      setCapturing(false)
+    }
+  }
+
+  // Tenta compartilhar texto + imagem juntos via Web Share API (abre WhatsApp/etc no celular).
+  // Fallback: baixa a imagem e abre wa.me só com texto, instruindo o usuário a anexar manualmente.
+  const handleShareWithImage = async () => {
+    setCapturing(true)
+    setCaptureMsg(null)
+    try {
+      const blob = await captureDashboard()
+      if (!blob) {
+        setCaptureMsg('Falha ao capturar o dashboard. Tente "Baixar imagem" e enviar manualmente.')
+        return
+      }
+      const file = new File([blob], `${fileNameBase}.png`, { type: 'image/png' })
+
+      // Web Share API com files — funciona em Chrome/Safari mobile e desktop recente.
+      const canShareFiles =
+        typeof navigator !== 'undefined' &&
+        typeof navigator.canShare === 'function' &&
+        navigator.canShare({ files: [file] })
+
+      if (canShareFiles && typeof navigator.share === 'function') {
+        try {
+          await navigator.share({
+            files: [file],
+            text: reportText,
+            title: `Relatório — ${cfg.empresaNome}`,
+          })
+          setCaptureMsg('Compartilhamento aberto.')
+          return
+        } catch (err) {
+          // AbortError = usuário cancelou; não tratar como erro.
+          if (err instanceof Error && err.name === 'AbortError') return
+          // Outros erros: cai no fallback abaixo.
+        }
+      }
+
+      // Fallback: baixa a imagem, copia o texto pro clipboard, abre WhatsApp.
+      // wa.me?text= com emojis corrompe ao truncar; clipboard preserva UTF-8.
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${fileNameBase}.png`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      const copiedOk = await openWhatsAppWithClipboard(reportText)
+      setCaptureMsg(
+        copiedOk
+          ? 'Imagem baixada, texto copiado e WhatsApp aberto. Cole o texto (Ctrl+V) e anexe a imagem na conversa.'
+          : 'Imagem baixada. WhatsApp aberto. Volte e clique "Copiar texto" pra colar.',
+      )
+    } finally {
+      setCapturing(false)
+    }
   }
 
   const handleDownload = () => {
@@ -622,32 +750,81 @@ export function RelatoriosView({ onBack }: Props) {
           </Panel>
 
           <div className="rounded-3xl bg-[#15171b] border border-white/[0.05] p-4 space-y-2">
+            {/* Ação primária: enviar relatório com imagem do dashboard */}
             <button
-              onClick={handleCopy}
-              className={cn(
-                'w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl text-[14px] font-semibold transition-colors',
-                copied ? 'bg-emerald-400 text-slate-900' : 'bg-cyan-400 hover:bg-cyan-300 text-slate-900',
-              )}
+              onClick={handleShareWithImage}
+              disabled={capturing}
+              className="w-full inline-flex items-center justify-center gap-2 h-12 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-[14px] font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-emerald-500/20"
             >
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied ? 'Copiado!' : 'Copiar texto'}
+              {capturing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+              {capturing ? 'Capturando dashboard…' : 'Enviar c/ imagem (WhatsApp)'}
             </button>
+            <p className="text-[11px] text-white/45 text-center px-2">
+              Anexa automaticamente a imagem do dashboard ao relatório.
+            </p>
+
+            <div className="h-px bg-white/[0.05] my-2" />
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleCopy}
+                className={cn(
+                  'inline-flex items-center justify-center gap-1.5 h-10 rounded-xl text-[12px] font-semibold transition-colors',
+                  copied ? 'bg-emerald-400 text-slate-900' : 'bg-cyan-400 hover:bg-cyan-300 text-slate-900',
+                )}
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? 'Copiado!' : 'Copiar texto'}
+              </button>
+              <button
+                onClick={handleDownloadImage}
+                disabled={capturing}
+                className="inline-flex items-center justify-center gap-1.5 h-10 rounded-xl bg-[#0c0d10] border border-white/[0.08] text-white/85 text-[12px] font-semibold hover:text-white hover:border-white/[0.18] disabled:opacity-60"
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+                Baixar imagem
+              </button>
+            </div>
             <button
               onClick={handleShareWhatsApp}
-              className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-emerald-500/[0.12] border border-emerald-400/30 text-emerald-300 text-[14px] font-semibold hover:bg-emerald-500/[0.20]"
+              className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-white/65 text-[12px] hover:text-white"
             >
-              <Share2 className="h-4 w-4" />
-              Compartilhar via WhatsApp
+              Só texto (sem imagem)
             </button>
             <button
               onClick={handleDownload}
-              className="w-full inline-flex items-center justify-center gap-2 h-11 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-white/75 text-[14px] font-semibold hover:text-white hover:border-white/[0.12]"
+              className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-white/65 text-[12px] hover:text-white"
             >
-              <Download className="h-4 w-4" />
-              Baixar como .txt
+              <Download className="h-3.5 w-3.5" />
+              Baixar .txt
             </button>
+
+            {captureMsg && (
+              <p className="text-[11px] text-cyan-300 bg-cyan-500/[0.08] border border-cyan-400/25 rounded-lg px-3 py-2 mt-2">
+                {captureMsg}
+              </p>
+            )}
           </div>
         </div>
+      </div>
+
+      {/* Dashboard embedado — capturado como imagem no envio */}
+      <div className="mt-8">
+        <Panel
+          icon={<ImageIcon className="h-4 w-4 text-cyan-400" />}
+          title="Imagem do dashboard que será enviada"
+          subtitle="Atualiza em tempo real conforme os dados"
+        >
+          <p className="text-[12px] text-white/55 mb-3">
+            Esta visão é capturada automaticamente quando você clica em <strong className="text-white">Enviar c/ imagem</strong>. Ajuste os filtros do dashboard normalmente — o que você vê aqui é o que vai pro WhatsApp.
+          </p>
+          <div
+            ref={dashboardRef}
+            className="rounded-2xl overflow-hidden bg-[#0c0d10] border border-white/[0.05]"
+          >
+            <DashboardView />
+          </div>
+        </Panel>
       </div>
     </motion.div>
   )
