@@ -15,6 +15,7 @@ import {
   Building2,
   ScrollText,
   Plug2,
+  Layers,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,7 @@ export type DashboardView =
   | 'perfil'
   | 'logs'
   | 'kommo'
+  | 'painel'
 
 interface SidebarItem {
   id: DashboardView
@@ -231,6 +233,10 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
                   </svg>
                 ),
               },
+            )}
+            {renderItem(
+              { id: 'painel', label: 'Painel unificado', iconUrl: '' },
+              { iconNode: <Layers className="h-[18px] w-[18px]" /> },
             )}
             {renderItem(
               { id: 'logs', label: 'Logs / Auditoria', iconUrl: '' },

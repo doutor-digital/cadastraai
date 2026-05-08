@@ -18,6 +18,7 @@ import { RelatoriosView } from '@/components/cadastro/relatorios-view'
 import { ConfigView } from '@/components/cadastro/config-view'
 import { LogsView } from '@/components/cadastro/logs-view'
 import { KommoView } from '@/components/cadastro/kommo-view'
+import { PainelView } from '@/components/cadastro/painel-view'
 import { ProfileView } from '@/components/dashboard/profile-view'
 import { useAuth } from '@/contexts/auth-context'
 import { useCadastroStore } from '@/lib/cadastro-store'
@@ -39,6 +40,7 @@ const validViews: DashboardView[] = [
   'perfil',
   'logs',
   'kommo',
+  'painel',
 ]
 
 function isValidView(value: string | null): value is DashboardView {
@@ -282,6 +284,14 @@ export function DashboardContent() {
             {view === 'config' && <ConfigView onBack={goDashboard} />}
             {view === 'logs' && <LogsView onBack={goDashboard} />}
             {view === 'kommo' && <KommoView onBack={goDashboard} />}
+            {view === 'painel' && (
+              <PainelView
+                onBack={goDashboard}
+                onNavigateLogs={() => handleNavigate('logs')}
+                onNavigateKommo={() => handleNavigate('kommo')}
+                onNavigateLeads={() => handleNavigate('leads-list')}
+              />
+            )}
             {view === 'perfil' && <ProfileView onBack={goDashboard} onLogout={handleLogout} />}
           </motion.div>
         </AnimatePresence>

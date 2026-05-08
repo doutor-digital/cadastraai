@@ -8,6 +8,7 @@ import { TextInput, SelectInput, SearchSelect } from './form-fields'
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import {
   empresasApi,
+  kommoApi,
   leadsApi,
   recebimentosApi,
   tratamentosApi,
@@ -270,6 +271,25 @@ export function TratamentoForm({
         kind: 'success',
         msg: editing ? 'Tratamento atualizado com sucesso.' : 'Tratamento cadastrado com sucesso.',
       })
+
+      // #6: push reverso — quando um lead importado da Kommo fecha tratamento, move
+      // o lead na Kommo para a etapa "Ganho". Best-effort silencioso: se o backend
+      // não tem o endpoint, ou se não acharmos o kommoLeadId, segue a vida.
+      if (lead?.id && lead.importado && empresaId) {
+        kommoApi
+          .inbox(empresaId, 'imported')
+          .then((items) => {
+            const match = items.find((i) => i.importedLeadId === lead.id)
+            if (match?.kommoLeadId != null) {
+              return kommoApi.moveLeadStatus(empresaId, match.kommoLeadId, {
+                statusId: 142, // 142 = "Ganho" no padrão Kommo; backend pode resolver pelo nome.
+                statusName: 'ganho',
+              })
+            }
+          })
+          .catch(() => null)
+      }
+
       if (!editing) setData(initialState)
       onSaved?.(tratamento)
     } catch (err) {

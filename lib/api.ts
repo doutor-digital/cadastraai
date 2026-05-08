@@ -491,6 +491,19 @@ export const leadsApi = {
   update: (leadId: string, data: UpdateLeadPayload) =>
     api.patch<LeadDetailDto>(`/api/leads/${leadId}`, data),
   delete: (leadId: string) => api.delete<void>(`/api/leads/${leadId}`),
+  // #10: detecção de duplicata pré-promote. Reusa o endpoint de listagem com search.
+  searchByPhone: async (empresaId: string, telefone: string): Promise<LeadDuplicateMatchDto[]> => {
+    if (!telefone || telefone.replace(/\D/g, '').length < 4) return []
+    const r = await api.get<PaginatedLeads>(`/api/empresas/${empresaId}/leads`, {
+      page: '1',
+      pageSize: '5',
+      search: telefone,
+    })
+    const onlyDigits = telefone.replace(/\D/g, '')
+    return r.items
+      .filter((l) => l.telefone.replace(/\D/g, '').includes(onlyDigits) || onlyDigits.includes(l.telefone.replace(/\D/g, '')))
+      .map((l) => ({ id: l.id, nome: l.nome, telefone: l.telefone, createdAt: l.createdAt }))
+  },
   bulkDelete: (empresaId: string, opts: { fonte?: FonteFiltro } = {}) => {
     const q: Record<string, string> = { confirm: 'APAGAR' }
     if (opts.fonte) q.fonte = opts.fonte
@@ -618,6 +631,197 @@ export interface KommoInboxItemDto {
   raw: string
 }
 
+// ----- Kommo: pipelines, statuses, responsáveis (proxied via CadastraAi.API) -----
+export interface KommoPipelineDto {
+  id: number
+  name: string
+  isMain: boolean
+  statuses: KommoStatusDto[]
+}
+
+export interface KommoStatusDto {
+  id: number
+  pipelineId: number
+  name: string
+  color?: string | null
+  type?: number | null
+}
+
+export interface KommoUserDto {
+  id: number
+  name: string
+  email?: string | null
+}
+
+// ----- Kommo: mapeamento de campos / responsáveis (overrides salvos por empresa) -----
+export type KommoFieldTarget =
+  | 'nome'
+  | 'telefone'
+  | 'origem'
+  | 'tipo'
+  | 'tipoResgate'
+  | 'interacao'
+  | 'agendouConsulta'
+  | 'pagamentoAntecipado'
+  | 'dataAgendamento'
+  | 'motivoNaoAgendamento'
+  | 'nomeResponsavel'
+
+export interface KommoFieldMappingRuleDto {
+  target: KommoFieldTarget
+  // chave do campo Kommo: field_code, field_name OR "lead.name" / "contact.phone"
+  sourceKey: string
+  // se o valor da Kommo é "X", força para Y (ex: "vendas" → "Cadastro")
+  valueMap?: Record<string, string>
+}
+
+export interface KommoFieldMappingDto {
+  empresaId: string
+  rules: KommoFieldMappingRuleDto[]
+  updatedAt?: string | null
+}
+
+export interface KommoResponsibleMappingDto {
+  empresaId: string
+  // kommoUserId → nome usado no CadastraAi
+  rules: { kommoUserId: number; kommoUserName?: string | null; nomeResponsavel: string }[]
+  // fallback quando não há match
+  fallbackNome?: string | null
+  updatedAt?: string | null
+}
+
+// ----- Kommo: auto-sync agendado -----
+export type AutoSyncInterval = '15m' | '1h' | '6h' | 'daily' | 'off'
+
+export interface KommoAutoSyncDto {
+  empresaId: string
+  enabled: boolean
+  interval: AutoSyncInterval
+  // opcional: limitar a um pipeline/statuses específicos
+  pipelineId?: number | null
+  statusIds?: number[] | null
+  limit: number
+  lastRunAt?: string | null
+  nextRunAt?: string | null
+}
+
+// ----- Kommo: histórico de syncs -----
+export interface KommoSyncHistoryEntryDto {
+  id: string
+  empresaId: string
+  triggeredByUserId?: string | null
+  triggeredByName?: string | null
+  source: 'manual' | 'auto' | 'webhook'
+  startedAt: string
+  finishedAt?: string | null
+  received: number
+  stored: number
+  promoted: number
+  discarded: number
+  errorMessage?: string | null
+  filters?: {
+    pipelineId?: number | null
+    statusIds?: number[] | null
+    createdAtFrom?: string | null
+    createdAtTo?: string | null
+    query?: string | null
+    limit?: number | null
+  } | null
+}
+
+export interface KommoTestConnectionResultDto {
+  ok: boolean
+  account?: { id: number; name: string; subdomain: string } | null
+  errorMessage?: string | null
+  pipelinesCount?: number | null
+  usersCount?: number | null
+}
+
+export interface KommoSyncOptions {
+  limit?: number
+  page?: number
+  query?: string
+  createdAtFrom?: string
+  createdAtTo?: string
+  pipelineId?: number
+  statusIds?: number[]
+  // #2: sync incremental — backend retorna apenas leads com updated_at/created_at > since.
+  since?: string
+}
+
+// ----- #3: Mapeamento de tags Kommo → tipo/origem do Cadastro -----
+export interface KommoTagMappingRuleDto {
+  // Tag exata na Kommo (case-insensitive). Ex: "site", "instagram", "indicacao".
+  tag: string
+  // Override aplicado ao lead promovido. target diz qual campo do Cadastro recebe value.
+  target: 'origem' | 'tipo' | 'tipoResgate'
+  value: string
+}
+
+export interface KommoTagMappingDto {
+  empresaId: string
+  rules: KommoTagMappingRuleDto[]
+  updatedAt?: string | null
+}
+
+// ----- #4: Notas/comentários Kommo -----
+export interface KommoLeadNoteDto {
+  id: number
+  leadId: number
+  // common, call_in, call_out, sms_in, sms_out, mail_message, geolocation, attachment, etc.
+  noteType: string
+  text?: string | null
+  // metadata bruto (varia por noteType — ex: durat, link, file_name)
+  metadata?: Record<string, unknown> | null
+  createdAt: string
+  createdByName?: string | null
+}
+
+// ----- #5: Eventos da timeline Kommo -----
+export interface KommoLeadEventDto {
+  id: string
+  type: string
+  // Ex: "lead_status_changed", "incoming_call", "common_note_added".
+  entityId: number
+  entityType: 'lead' | 'contact' | 'company'
+  createdAt: string
+  createdByName?: string | null
+  valueBefore?: string | null
+  valueAfter?: string | null
+  rawSummary?: string | null
+}
+
+// ----- #7: Mensagens / WhatsApp -----
+export type KommoMessageDirection = 'in' | 'out'
+export interface KommoLeadMessageDto {
+  id: string
+  leadId: number
+  channel: 'whatsapp' | 'telegram' | 'instagram' | 'email' | 'sms' | 'other'
+  direction: KommoMessageDirection
+  text: string
+  attachments?: { type: string; url: string; name?: string | null }[] | null
+  authorName?: string | null
+  createdAt: string
+}
+
+// ----- #6 / #8: Push reverso (mover status, linkar custom_field) -----
+export interface KommoMoveStatusPayload {
+  pipelineId?: number
+  statusId: number
+  // Ex: "ganho", "perdido". Backend resolve pelo nome se statusId não vier.
+  statusName?: string
+}
+
+// ----- #10: Dedup por telefone -----
+export interface LeadDuplicateMatchDto {
+  id: string
+  nome: string
+  telefone: string
+  createdAt: string
+}
+
+// Endpoints novos esperados em CadastraAi.API. Onde não existirem ainda, o front
+// captura o erro 404 e segue funcionando com o que já há.
 export const kommoApi = {
   getConfig: (empresaId: string) =>
     api.get<KommoConfigDto | null>(`/api/empresas/${empresaId}/kommo/config`),
@@ -625,7 +829,13 @@ export const kommoApi = {
     api.put<KommoConfigDto>(`/api/empresas/${empresaId}/kommo/config`, data),
   deleteConfig: (empresaId: string) =>
     api.delete<void>(`/api/empresas/${empresaId}/kommo/config`),
-  sync: (empresaId: string, opts: { limit?: number; page?: number; query?: string } = {}) =>
+
+  // TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/test-connection — usa o token salvo,
+  // chama https://{subdomain}.kommo.com/api/v4/account?with=users e devolve resumo.
+  testConnection: (empresaId: string) =>
+    api.get<KommoTestConnectionResultDto>(`/api/empresas/${empresaId}/kommo/test-connection`),
+
+  sync: (empresaId: string, opts: KommoSyncOptions = {}) =>
     api.post<KommoSyncResponseDto>(`/api/empresas/${empresaId}/kommo/sync`, opts),
   inbox: (empresaId: string, status?: 'pending' | 'imported' | 'discarded') =>
     api.get<KommoInboxItemDto[]>(
@@ -643,6 +853,149 @@ export const kommoApi = {
     api.delete<void>(`/api/empresas/${empresaId}/kommo/inbox/${itemId}`),
   promote: (empresaId: string, itemId: string, lead: CreateLeadPayload) =>
     api.post<LeadDetailDto>(`/api/empresas/${empresaId}/kommo/inbox/${itemId}/promote`, { lead }),
+
+  // TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/pipelines — proxy para
+  // /api/v4/leads/pipelines (Kommo). Retorna pipelines + statuses cacheados.
+  pipelines: (empresaId: string) =>
+    api.get<KommoPipelineDto[]>(`/api/empresas/${empresaId}/kommo/pipelines`),
+
+  // TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/users — proxy para /api/v4/users (Kommo).
+  users: (empresaId: string) =>
+    api.get<KommoUserDto[]>(`/api/empresas/${empresaId}/kommo/users`),
+
+  // TODO(CadastraAi.API): GET/PUT /api/empresas/{id}/kommo/field-mapping — persiste regras
+  // de override que sobrescrevem o auto-detect do kommo-mapping.ts.
+  getFieldMapping: (empresaId: string) =>
+    api.get<KommoFieldMappingDto | null>(`/api/empresas/${empresaId}/kommo/field-mapping`),
+  saveFieldMapping: (empresaId: string, data: { rules: KommoFieldMappingRuleDto[] }) =>
+    api.put<KommoFieldMappingDto>(`/api/empresas/${empresaId}/kommo/field-mapping`, data),
+
+  // TODO(CadastraAi.API): GET/PUT /api/empresas/{id}/kommo/responsible-mapping
+  getResponsibleMapping: (empresaId: string) =>
+    api.get<KommoResponsibleMappingDto | null>(`/api/empresas/${empresaId}/kommo/responsible-mapping`),
+  saveResponsibleMapping: (
+    empresaId: string,
+    data: { rules: KommoResponsibleMappingDto['rules']; fallbackNome?: string | null },
+  ) => api.put<KommoResponsibleMappingDto>(`/api/empresas/${empresaId}/kommo/responsible-mapping`, data),
+
+  // TODO(CadastraAi.API): GET/PUT /api/empresas/{id}/kommo/auto-sync. Backend deve rodar um
+  // BackgroundService/HostedService que checa empresas com autoSync.enabled e dispara sync
+  // quando nextRunAt <= now. Atualizar lastRunAt/nextRunAt depois de rodar.
+  getAutoSync: (empresaId: string) =>
+    api.get<KommoAutoSyncDto | null>(`/api/empresas/${empresaId}/kommo/auto-sync`),
+  saveAutoSync: (
+    empresaId: string,
+    data: Omit<KommoAutoSyncDto, 'empresaId' | 'lastRunAt' | 'nextRunAt'>,
+  ) => api.put<KommoAutoSyncDto>(`/api/empresas/${empresaId}/kommo/auto-sync`, data),
+
+  // TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/sync-history?page=&pageSize=
+  syncHistory: (empresaId: string, opts: { page?: number; pageSize?: number } = {}) => {
+    const q: Record<string, string> = {}
+    if (opts.page !== undefined) q.page = String(opts.page)
+    if (opts.pageSize !== undefined) q.pageSize = String(opts.pageSize)
+    return api.get<{ items: KommoSyncHistoryEntryDto[]; total: number }>(
+      `/api/empresas/${empresaId}/kommo/sync-history`,
+      q,
+    )
+  },
+
+  // #3: TODO(CadastraAi.API): GET/PUT /api/empresas/{id}/kommo/tag-mapping
+  getTagMapping: (empresaId: string) =>
+    api.get<KommoTagMappingDto | null>(`/api/empresas/${empresaId}/kommo/tag-mapping`),
+  saveTagMapping: (empresaId: string, data: { rules: KommoTagMappingRuleDto[] }) =>
+    api.put<KommoTagMappingDto>(`/api/empresas/${empresaId}/kommo/tag-mapping`, data),
+
+  // #4: TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/leads/{kommoLeadId}/notes
+  // proxy para /api/v4/leads/{id}/notes (ordenado desc por created_at).
+  leadNotes: (empresaId: string, kommoLeadId: number) =>
+    api.get<KommoLeadNoteDto[]>(`/api/empresas/${empresaId}/kommo/leads/${kommoLeadId}/notes`),
+
+  // #5: TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/events?leadId=&page=
+  // proxy para /api/v4/events?filter[entity]=lead&filter[entity_id]=...
+  events: (empresaId: string, opts: { leadId?: number; page?: number; pageSize?: number } = {}) => {
+    const q: Record<string, string> = {}
+    if (opts.leadId !== undefined) q.leadId = String(opts.leadId)
+    if (opts.page !== undefined) q.page = String(opts.page)
+    if (opts.pageSize !== undefined) q.pageSize = String(opts.pageSize)
+    return api.get<{ items: KommoLeadEventDto[]; total: number }>(
+      `/api/empresas/${empresaId}/kommo/events`,
+      q,
+    )
+  },
+
+  // #6: TODO(CadastraAi.API): POST /api/empresas/{id}/kommo/leads/{kommoLeadId}/move-status
+  moveLeadStatus: (empresaId: string, kommoLeadId: number, data: KommoMoveStatusPayload) =>
+    api.post<{ ok: true; pipelineId: number; statusId: number }>(
+      `/api/empresas/${empresaId}/kommo/leads/${kommoLeadId}/move-status`,
+      data,
+    ),
+
+  // #7: TODO(CadastraAi.API): GET /api/empresas/{id}/kommo/leads/{kommoLeadId}/messages
+  // proxy para /api/v4/chats/{chat_id}/messages — backend resolve chat_id pelo lead.
+  leadMessages: (
+    empresaId: string,
+    kommoLeadId: number,
+    opts: { page?: number; pageSize?: number } = {},
+  ) => {
+    const q: Record<string, string> = {}
+    if (opts.page !== undefined) q.page = String(opts.page)
+    if (opts.pageSize !== undefined) q.pageSize = String(opts.pageSize)
+    return api.get<{ items: KommoLeadMessageDto[]; total: number }>(
+      `/api/empresas/${empresaId}/kommo/leads/${kommoLeadId}/messages`,
+      q,
+    )
+  },
+
+  // #8: TODO(CadastraAi.API): POST /api/empresas/{id}/kommo/leads/{kommoLeadId}/link-cadastro
+  // grava custom_field "ID Cadastro" no lead Kommo e devolve a URL do lead Kommo.
+  linkCadastroId: (empresaId: string, kommoLeadId: number, cadastroLeadId: string) =>
+    api.post<{ ok: true; kommoLeadUrl: string }>(
+      `/api/empresas/${empresaId}/kommo/leads/${kommoLeadId}/link-cadastro`,
+      { cadastroLeadId },
+    ),
+
+  // #9: TODO(CadastraAi.API): DELETE /api/empresas/{id}/kommo/inbox?olderThan=ISO&status=pending
+  bulkDiscard: (empresaId: string, opts: { olderThan?: string; status?: 'pending' | 'discarded' }) => {
+    const q: Record<string, string> = {}
+    if (opts.olderThan) q.olderThan = opts.olderThan
+    if (opts.status) q.status = opts.status
+    return api.request<{ deleted: number }>(
+      `/api/empresas/${empresaId}/kommo/inbox/bulk-discard`,
+      { method: 'POST', params: q },
+    )
+  },
+
+  // Promoção em massa — front itera nos endpoints existentes. Quando o backend expor
+  // POST /api/empresas/{id}/kommo/inbox/bulk-promote, basta trocar a implementação aqui.
+  bulkPromote: async (
+    empresaId: string,
+    items: { itemId: string; lead: CreateLeadPayload }[],
+  ): Promise<{ ok: { itemId: string; leadId: string }[]; failed: { itemId: string; error: string }[] }> => {
+    const ok: { itemId: string; leadId: string }[] = []
+    const failed: { itemId: string; error: string }[] = []
+    for (const it of items) {
+      try {
+        const created = await api.post<LeadDetailDto>(
+          `/api/empresas/${empresaId}/kommo/inbox/${it.itemId}/promote`,
+          { lead: it.lead },
+        )
+        ok.push({ itemId: it.itemId, leadId: created.id })
+      } catch (err) {
+        failed.push({ itemId: it.itemId, error: err instanceof Error ? err.message : 'erro' })
+      }
+    }
+    return { ok, failed }
+  },
+}
+
+// Helper: detecta se o erro indica endpoint inexistente (backend ainda não implementado).
+// Usado pela UI para mostrar um aviso "feature pendente no backend" sem quebrar.
+export function isBackendNotImplemented(error: unknown): boolean {
+  if (error instanceof Error) {
+    const m = error.message.toLowerCase()
+    return m.includes('http 404') || m.includes('http 501') || m.includes('not implemented')
+  }
+  return false
 }
 
 // URL pública do webhook que o usuário cola na Kommo. Construída no client porque

@@ -17,10 +17,17 @@ import {
   Sparkles,
   RefreshCw,
   AlertCircle,
+  StickyNote,
+  MessageCircle,
+  Plug2,
 } from 'lucide-react'
 import {
+  isBackendNotImplemented,
+  kommoApi,
   leadsApi,
   type ConsultaDto,
+  type KommoLeadMessageDto,
+  type KommoLeadNoteDto,
   type LeadDetailDto,
   type RecebimentoDto,
   type TratamentoDto,
@@ -455,6 +462,11 @@ export function LeadDetailView({
         </div>
       </div>
 
+      {/* #4 + #7: Origem Kommo — só aparece para leads importados */}
+      {lead.importado && lead.empresaId && (
+        <KommoOriginPanel empresaId={lead.empresaId} cadastroLeadId={lead.id} />
+      )}
+
       {/* Funnel state */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
         <FunnelStep
@@ -601,6 +613,210 @@ export function LeadDetailView({
         </div>
       )}
     </motion.div>
+  )
+}
+
+// #4 + #7: painel "Origem Kommo" — resolve kommoLeadId via inbox e exibe notas/mensagens
+function KommoOriginPanel({ empresaId, cadastroLeadId }: { empresaId: string; cadastroLeadId: string }) {
+  const [kommoLeadId, setKommoLeadId] = useState<number | null>(null)
+  const [resolving, setResolving] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setResolving(true)
+    kommoApi
+      .inbox(empresaId, 'imported')
+      .then((items) => {
+        if (cancelled) return
+        const match = items.find((i) => i.importedLeadId === cadastroLeadId)
+        setKommoLeadId(match?.kommoLeadId ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setKommoLeadId(null)
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [empresaId, cadastroLeadId])
+
+  if (resolving) {
+    return (
+      <div className="rounded-3xl bg-[#15171b] border border-white/5 p-4 mb-4 flex items-center gap-2 text-[12px] text-white/55">
+        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+        Carregando origem Kommo…
+      </div>
+    )
+  }
+  if (kommoLeadId == null) return null
+
+  return (
+    <div className="rounded-3xl bg-[#15171b] border border-violet-400/20 mb-4 overflow-hidden">
+      <div className="px-6 h-12 flex items-center gap-2 border-b border-white/5 bg-violet-500/[0.04]">
+        <Plug2 className="h-4 w-4 text-violet-300" />
+        <h3 className="text-[14px] font-semibold text-white">
+          Origem: Kommo <span className="text-violet-300 font-normal">#{kommoLeadId}</span>
+        </h3>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-white/5">
+        <KommoNotesSection empresaId={empresaId} kommoLeadId={kommoLeadId} />
+        <KommoMessagesSection empresaId={empresaId} kommoLeadId={kommoLeadId} />
+      </div>
+    </div>
+  )
+}
+
+function KommoNotesSection({ empresaId, kommoLeadId }: { empresaId: string; kommoLeadId: number }) {
+  const [notes, setNotes] = useState<KommoLeadNoteDto[]>([])
+  const [loading, setLoading] = useState(true)
+  const [supported, setSupported] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    kommoApi
+      .leadNotes(empresaId, kommoLeadId)
+      .then((list) => {
+        if (cancelled) return
+        setNotes(list)
+        setSupported(true)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        if (isBackendNotImplemented(err)) setSupported(false)
+        setNotes([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [empresaId, kommoLeadId])
+
+  return (
+    <div className="p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <StickyNote className="h-4 w-4 text-amber-300" />
+        <h4 className="text-[13px] font-semibold text-white">Notas da Kommo</h4>
+        {notes.length > 0 && (
+          <span className="text-[10px] font-bold text-amber-200 bg-amber-500/15 px-1.5 py-0.5 rounded">
+            {notes.length}
+          </span>
+        )}
+      </div>
+      {!supported ? (
+        <p className="text-[11px] text-amber-100/85">
+          <AlertCircle className="h-3 w-3 inline mr-1" />
+          Endpoint <code className="text-amber-300">GET /kommo/leads/{kommoLeadId}/notes</code> pendente em{' '}
+          <strong>CadastraAi.API</strong>.
+        </p>
+      ) : loading ? (
+        <p className="text-[12px] text-white/45">Carregando…</p>
+      ) : notes.length === 0 ? (
+        <p className="text-[12px] text-white/45">Sem notas neste lead Kommo.</p>
+      ) : (
+        <ul className="space-y-2 max-h-72 overflow-y-auto">
+          {notes.map((n) => (
+            <li key={n.id} className="rounded-lg bg-[#0c0d10] border border-white/5 p-3">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-[10px] uppercase tracking-wider text-white/45 font-semibold">
+                  {n.noteType.replace(/_/g, ' ')}
+                </span>
+                <span className="text-[10px] text-white/45 tabular-nums">
+                  {new Date(n.createdAt).toLocaleString('pt-BR')}
+                </span>
+              </div>
+              {n.text && <p className="text-[12px] text-white/85 whitespace-pre-wrap break-words">{n.text}</p>}
+              {n.createdByName && (
+                <p className="text-[10px] text-white/45 mt-1">por {n.createdByName}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function KommoMessagesSection({ empresaId, kommoLeadId }: { empresaId: string; kommoLeadId: number }) {
+  const [msgs, setMsgs] = useState<KommoLeadMessageDto[]>([])
+  const [loading, setLoading] = useState(true)
+  const [supported, setSupported] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    kommoApi
+      .leadMessages(empresaId, kommoLeadId, { pageSize: 50 })
+      .then((r) => {
+        if (cancelled) return
+        setMsgs(r.items)
+        setSupported(true)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        if (isBackendNotImplemented(err)) setSupported(false)
+        setMsgs([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [empresaId, kommoLeadId])
+
+  return (
+    <div className="p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <MessageCircle className="h-4 w-4 text-emerald-300" />
+        <h4 className="text-[13px] font-semibold text-white">Conversas (WhatsApp/chat)</h4>
+        {msgs.length > 0 && (
+          <span className="text-[10px] font-bold text-emerald-200 bg-emerald-500/15 px-1.5 py-0.5 rounded">
+            {msgs.length}
+          </span>
+        )}
+      </div>
+      {!supported ? (
+        <p className="text-[11px] text-amber-100/85">
+          <AlertCircle className="h-3 w-3 inline mr-1" />
+          Endpoint <code className="text-amber-300">GET /kommo/leads/{kommoLeadId}/messages</code> pendente em{' '}
+          <strong>CadastraAi.API</strong>.
+        </p>
+      ) : loading ? (
+        <p className="text-[12px] text-white/45">Carregando…</p>
+      ) : msgs.length === 0 ? (
+        <p className="text-[12px] text-white/45">Sem mensagens neste lead Kommo.</p>
+      ) : (
+        <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+          {msgs.map((m) => (
+            <li
+              key={m.id}
+              className={cn(
+                'rounded-lg border px-3 py-2 max-w-[85%]',
+                m.direction === 'in'
+                  ? 'bg-white/[0.03] border-white/5 mr-auto'
+                  : 'bg-emerald-500/[0.06] border-emerald-400/20 ml-auto',
+              )}
+            >
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[10px] uppercase tracking-wider font-semibold text-white/55">
+                  {m.channel} · {m.direction === 'in' ? '↓ recebido' : '↑ enviado'}
+                </span>
+                <span className="text-[10px] text-white/45 tabular-nums ml-auto">
+                  {new Date(m.createdAt).toLocaleString('pt-BR')}
+                </span>
+              </div>
+              <p className="text-[12px] text-white/85 whitespace-pre-wrap break-words">{m.text}</p>
+              {m.authorName && <p className="text-[10px] text-white/45 mt-1">por {m.authorName}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
