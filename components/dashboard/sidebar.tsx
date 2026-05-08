@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
 import { useStoreCounts, useIsClient } from '@/lib/cadastro-store'
 import { AvatarCircle } from '@/components/ui/avatar-circle'
+import { ProfileDialog } from '@/components/dashboard/profile-dialog'
 
 export type DashboardView =
   | 'dashboard'
@@ -59,6 +60,7 @@ interface DashboardSidebarProps {
 
 export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const counts = useStoreCounts()
   const isClient = useIsClient()
   const { logout, user } = useAuth()
@@ -243,7 +245,14 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
 
         {/* Footer */}
         <div className="pt-3 mt-2 border-t border-white/6">
-          <div className={cn('flex items-center gap-2.5 px-2 py-1.5', collapsed && 'justify-center')}>
+          <button
+            onClick={() => setProfileOpen(true)}
+            title={collapsed ? 'Ver perfil' : 'Ver detalhes do perfil'}
+            className={cn(
+              'group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-2xl hover:bg-white/[0.04] transition-colors text-left',
+              collapsed && 'justify-center',
+            )}
+          >
             <AvatarCircle src={user?.avatarUrl} name={user?.name} email={user?.email} size={32} />
             <AnimatePresence initial={false}>
               {!collapsed && (
@@ -254,12 +263,14 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
                   exit={{ opacity: 0 }}
                   className="flex-1 min-w-0"
                 >
-                  <p className="text-xs font-semibold text-white truncate">{user?.name || 'Usuário'}</p>
+                  <p className="text-xs font-semibold text-white truncate group-hover:text-cyan-300 transition-colors">
+                    {user?.name || 'Usuário'}
+                  </p>
                   <p className="text-[11px] text-white/55 truncate">{user?.email || 'demo@cadastra.ai'}</p>
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
+          </button>
           <button
             onClick={handleLogout}
             className={cn(
@@ -286,6 +297,12 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
           </button>
         </div>
       </div>
+
+      <ProfileDialog
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        onLogout={handleLogout}
+      />
     </aside>
   )
 }
