@@ -39,6 +39,7 @@ export type DashboardView =
   | 'perfil'
   | 'logs'
   | 'kommo'
+  | 'integracoes'
   | 'painel'
 
 interface SidebarItem {
@@ -243,7 +244,7 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
               { iconNode: <ScrollText className="h-[18px] w-[18px]" /> },
             )}
             {renderItem(
-              { id: 'kommo', label: 'Kommo', iconUrl: '' },
+              { id: 'integracoes', label: 'Integrações', iconUrl: '' },
               { iconNode: <Plug2 className="h-[18px] w-[18px]" /> },
             )}
             {renderItem(

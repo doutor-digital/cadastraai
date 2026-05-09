@@ -1005,3 +1005,80 @@ export function buildKommoWebhookUrl(empresaId: string, secret?: string | null):
   const s = secret ? `?secret=${encodeURIComponent(secret)}` : ''
   return `${base}/api/empresas/${empresaId}/kommo/webhook${s}`
 }
+
+// ============================================================================
+// Centro de Integrações — provedores além da Kommo
+// ============================================================================
+// Cada provider segue o mesmo formato: status de conexão por empresa, save de
+// credenciais, webhook URL pública e sync manual. O backend .NET já tem rotas
+// para Cloudia, Kommo, Meta e N8N (em /api/webhooks/*). Onde a rota de status
+// ainda não existir, a UI captura 404 com isBackendNotImplemented().
+
+export type IntegrationProvider = 'cloudia' | 'kommo' | 'meta' | 'google' | 'n8n' | 'webhook'
+
+export interface IntegrationStatusDto {
+  provider: IntegrationProvider
+  empresaId: string
+  connected: boolean
+  // Resumo "humano" da conexão (ex.: "subdomain: araguaina • last sync: há 12min").
+  summary?: string | null
+  lastSyncAt?: string | null
+  webhookUrl?: string | null
+  // Quando o backend reporta erro (token inválido/expirado).
+  errorMessage?: string | null
+}
+
+// ----- Cloudia (CRM principal — fonte das planilhas que abastecem o cadastro) -----
+export interface CloudiaConfigDto {
+  baseUrl: string
+  hasApiKey: boolean
+  apiKeySuffix?: string | null
+  webhookSecret?: string | null
+  hasWebhookSecret: boolean
+  lastSyncAt?: string | null
+}
+
+export interface SaveCloudiaConfigPayload {
+  baseUrl: string
+  apiKey: string
+  webhookSecret?: string
+}
+
+export interface CloudiaSyncResponseDto {
+  received: number
+  stored: number
+  promoted: number
+  lastSyncAt: string
+}
+
+export const cloudiaApi = {
+  getConfig: (empresaId: string) =>
+    api.get<CloudiaConfigDto | null>(`/api/empresas/${empresaId}/cloudia/config`),
+  saveConfig: (empresaId: string, data: SaveCloudiaConfigPayload) =>
+    api.put<CloudiaConfigDto>(`/api/empresas/${empresaId}/cloudia/config`, data),
+  testConnection: (empresaId: string) =>
+    api.get<{ ok: boolean; account?: { name: string } | null; errorMessage?: string | null }>(
+      `/api/empresas/${empresaId}/cloudia/test-connection`,
+    ),
+  sync: (empresaId: string, body?: { since?: string; limit?: number }) =>
+    api.post<CloudiaSyncResponseDto>(`/api/empresas/${empresaId}/cloudia/sync`, body ?? {}),
+}
+
+export function buildCloudiaWebhookUrl(empresaId: string, secret?: string | null): string {
+  const base = API_BASE_URL.replace(/\/$/, '')
+  const s = secret ? `?secret=${encodeURIComponent(secret)}` : ''
+  return `${base}/api/empresas/${empresaId}/cloudia/webhook${s}`
+}
+
+// ----- Webhook genérico (Meta, N8N, Zapier, Make, etc.) -----
+// Endpoint único, com header x-source que diferencia o provider.
+export function buildGenericWebhookUrl(empresaId: string, provider: IntegrationProvider): string {
+  const base = API_BASE_URL.replace(/\/$/, '')
+  return `${base}/api/empresas/${empresaId}/webhooks/${provider}`
+}
+
+// Hub: status agregado de todas as integrações de uma empresa.
+export const integrationsApi = {
+  list: (empresaId: string) =>
+    api.get<IntegrationStatusDto[]>(`/api/empresas/${empresaId}/integrations`),
+}

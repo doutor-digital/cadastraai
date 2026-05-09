@@ -18,6 +18,7 @@ import { RelatoriosView } from '@/components/cadastro/relatorios-view'
 import { ConfigView } from '@/components/cadastro/config-view'
 import { LogsView } from '@/components/cadastro/logs-view'
 import { KommoView } from '@/components/cadastro/kommo-view'
+import { IntegrationsView } from '@/components/cadastro/integrations-view'
 import { PainelView } from '@/components/cadastro/painel-view'
 import { ProfileView } from '@/components/dashboard/profile-view'
 import { useAuth } from '@/contexts/auth-context'
@@ -40,6 +41,7 @@ const validViews: DashboardView[] = [
   'perfil',
   'logs',
   'kommo',
+  'integracoes',
   'painel',
 ]
 
@@ -51,10 +53,12 @@ function isValidView(value: string | null): value is DashboardView {
 const PATH_TO_VIEW: Record<string, DashboardView> = {
   '/leads': 'leads-list',
   '/importados': 'importados',
+  '/integracoes': 'integracoes',
 }
 const VIEW_TO_PATH: Partial<Record<DashboardView, string>> = {
   'leads-list': '/leads',
   importados: '/importados',
+  integracoes: '/integracoes',
 }
 
 function viewFromLocation(pathname: string, searchView: string | null): DashboardView {
@@ -284,6 +288,7 @@ export function DashboardContent() {
             {view === 'config' && <ConfigView onBack={goDashboard} />}
             {view === 'logs' && <LogsView onBack={goDashboard} />}
             {view === 'kommo' && <KommoView onBack={goDashboard} />}
+            {view === 'integracoes' && <IntegrationsView onBack={goDashboard} />}
             {view === 'painel' && (
               <PainelView
                 onBack={goDashboard}
