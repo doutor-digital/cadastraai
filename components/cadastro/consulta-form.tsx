@@ -8,15 +8,14 @@ import { TextInput, SelectInput, ToggleSwitch, SearchSelect } from './form-field
 import { RecebimentosEditor, type RecebimentoInput } from './recebimentos-editor'
 import {
   consultasApi,
-  empresasApi,
   leadsApi,
   recebimentosApi,
   type ConsultaDto,
   type CreateConsultaPayload,
-  type EmpresaDto,
   type LeadSummaryDto,
   type RecebimentoDto,
 } from '@/lib/api'
+import { useEmpresa } from '@/contexts/empresa-context'
 import { useConfig } from '@/lib/config-store'
 import {
   MOTIVOS_NAO_FECHAMENTO_DEFAULT,
@@ -177,11 +176,13 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
     [config.planosTratamento],
   )
 
-  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
-  const [empresaId, setEmpresaId] = useState<string>('')
+  const { empresas, currentEmpresa, setCurrentEmpresaId } = useEmpresa()
   const [leads, setLeads] = useState<LeadSummaryDto[]>([])
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // Empresa do form: começa com a ativa do contexto. Se editing/prefill resolver
+  // pra outra empresa, troca a ativa global pra refletir nas outras views.
+  const [empresaId, setEmpresaId] = useState<string>(currentEmpresa?.id ?? '')
 
   const [data, setData] = useState<FormState>(() =>
     editing ? fromConsulta(editing) : { ...initialState, leadId: prefilledLeadId ?? '' },
@@ -192,33 +193,25 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
     if (editing) setData(fromConsulta(editing))
   }, [editing])
 
-  // Carrega empresas. Se for edição/prefill, descobre a empresa do lead correspondente.
+  // Mantém empresaId em sync com o contexto enquanto não há prefill/editing.
+  useEffect(() => {
+    if (currentEmpresa && !empresaId) setEmpresaId(currentEmpresa.id)
+  }, [currentEmpresa, empresaId])
+
+  // Se for edição/prefill, descobre a empresa do lead correspondente e
+  // promove pra empresa ativa global.
   useEffect(() => {
     let cancelled = false
     async function init() {
+      const refLeadId = editing?.leadId ?? prefilledLeadId
+      if (!refLeadId) return
       try {
-        const list = await empresasApi.list()
+        const detail = await leadsApi.get(refLeadId)
         if (cancelled) return
-        setEmpresas(list)
-
-        const refLeadId = editing?.leadId ?? prefilledLeadId
-        if (refLeadId) {
-          try {
-            const detail = await leadsApi.get(refLeadId)
-            if (cancelled) return
-            setEmpresaId(detail.empresaId)
-            return
-          } catch {
-            // cai no padrão (primeira empresa)
-          }
-        }
-        setEmpresaId(list[0]?.id ?? '')
-      } catch (err) {
-        if (cancelled) return
-        setFeedback({
-          kind: 'error',
-          msg: err instanceof Error ? err.message : 'Erro ao carregar empresas.',
-        })
+        setEmpresaId(detail.empresaId)
+        if (detail.empresaId !== currentEmpresa?.id) setCurrentEmpresaId(detail.empresaId)
+      } catch {
+        // mantém empresa atual
       }
     }
     init()
@@ -388,6 +381,7 @@ export function ConsultaForm({ onBack, onSaved, prefilledLeadId, editing }: Cons
             value={empresaId}
             onChange={(e) => {
               setEmpresaId(e.target.value)
+              setCurrentEmpresaId(e.target.value)
               setData((prev) => ({ ...prev, leadId: '' }))
             }}
             options={empresas.map((e) => ({ value: e.id, label: e.nome }))}

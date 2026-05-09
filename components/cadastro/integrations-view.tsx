@@ -19,7 +19,6 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  empresasApi,
   cloudiaApi,
   kommoApi,
   isBackendNotImplemented,
@@ -30,6 +29,7 @@ import {
   type IntegrationProvider,
   type IntegrationStatusDto,
 } from '@/lib/api'
+import { useEmpresa } from '@/contexts/empresa-context'
 import { CloudiaView } from '@/components/cadastro/cloudia-view'
 import { KommoView } from '@/components/cadastro/kommo-view'
 
@@ -121,8 +121,12 @@ const PROVIDERS: ProviderMeta[] = [
 type Detail = null | 'cloudia' | 'kommo'
 
 export function IntegrationsView({ onBack }: Props) {
-  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
-  const [empresaId, setEmpresaId] = useState<string | null>(null)
+  // Empresa ativa vem do contexto global. Trocar empresa no switcher da sidebar
+  // já reflete aqui automaticamente.
+  const { currentEmpresa, isLoading: loading } = useEmpresa()
+  const empresaAtual = currentEmpresa
+  const empresaId = currentEmpresa?.id ?? null
+
   const [statuses, setStatuses] = useState<Record<IntegrationProvider, IntegrationStatusDto | null>>({
     cloudia: null,
     kommo: null,
@@ -131,36 +135,20 @@ export function IntegrationsView({ onBack }: Props) {
     n8n: null,
     webhook: null,
   })
-  const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [detail, setDetail] = useState<Detail>(null)
 
   useEffect(() => {
-    void empresasApi
-      .list()
-      .then((rows) => {
-        setEmpresas(rows)
-        if (rows[0]?.id) setEmpresaId(rows[0].id)
-      })
-      .finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => {
-    if (!empresaId) return
-    void refreshStatuses(empresaId)
+    if (!empresaAtual) return
+    void refreshStatuses(empresaAtual)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresaId])
+  }, [empresaAtual?.id])
 
-  const empresaAtual = useMemo(
-    () => empresas.find((e) => e.id === empresaId) ?? null,
-    [empresas, empresaId],
-  )
-
-  async function refreshStatuses(eid: string) {
+  async function refreshStatuses(emp: EmpresaDto) {
     setRefreshing(true)
     // Tenta o endpoint agregado primeiro. Se 404, faz fallback por provider.
     try {
-      const list = await fetchAggregateOrFallback(eid)
+      const list = await fetchAggregateOrFallback(emp)
       const next: Record<IntegrationProvider, IntegrationStatusDto | null> = {
         cloudia: null,
         kommo: null,
@@ -210,25 +198,15 @@ export function IntegrationsView({ onBack }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
-          {empresas.length > 1 && (
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+          {empresaAtual && (
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
               <Building2 className="h-4 w-4 text-white/50" />
-              <select
-                value={empresaId ?? ''}
-                onChange={(e) => setEmpresaId(e.target.value)}
-                className="bg-transparent text-sm text-white outline-none"
-              >
-                {empresas.map((e) => (
-                  <option key={e.id} value={e.id} className="bg-slate-900">
-                    {e.nome}
-                  </option>
-                ))}
-              </select>
+              <span>{empresaAtual.nome}</span>
             </div>
           )}
           <button
-            onClick={() => empresaId && refreshStatuses(empresaId)}
-            disabled={!empresaId || refreshing}
+            onClick={() => empresaAtual && refreshStatuses(empresaAtual)}
+            disabled={!empresaAtual || refreshing}
             className={cn(
               'flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/80',
               'hover:bg-white/[0.06] disabled:opacity-50',
@@ -633,7 +611,8 @@ function AutomationRulesCard() {
 
 // ----- Helpers -----
 
-async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationStatusDto[]> {
+async function fetchAggregateOrFallback(empresa: EmpresaDto): Promise<IntegrationStatusDto[]> {
+  const empresaId = empresa.id
   // Tenta o endpoint agregado primeiro.
   try {
     const { integrationsApi } = await import('@/lib/api')
@@ -647,16 +626,6 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
   }
 
   // Fallback: pergunta cada provider individualmente. Falhas viram "não conectado".
-  // Para construir URLs curtas precisamos do EmpresaDto completo (com webhookShortCode).
-  let empresa: { id: string; webhookShortCode?: string | null } = { id: empresaId }
-  try {
-    const list = await empresasApi.list()
-    const found = list.find((e) => e.id === empresaId)
-    if (found) empresa = found
-  } catch {
-    // Se falhar, segue com fallback de UUID na URL.
-  }
-
   const out: IntegrationStatusDto[] = []
   await Promise.allSettled([
     cloudiaApi

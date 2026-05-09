@@ -4,7 +4,8 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Trash2, Search, UserPlus, Users, RefreshCw, AlertTriangle, UploadCloud } from 'lucide-react'
 import { clearAllLocal, deleteLead, useCadastroStore } from '@/lib/cadastro-store'
-import { empresasApi, leadsApi, type CreateLeadPayload, type EmpresaDto, type LeadSummaryDto } from '@/lib/api'
+import { leadsApi, type CreateLeadPayload, type LeadSummaryDto } from '@/lib/api'
+import { useEmpresa } from '@/contexts/empresa-context'
 import { cn } from '@/lib/utils'
 import type { Lead } from '@/types'
 
@@ -57,8 +58,9 @@ function summaryToLead(s: LeadSummaryDto): Lead {
 
 export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsListViewProps) {
   const localStore = useCadastroStore()
-  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
-  const [empresaId, setEmpresaId] = useState<string>('')
+  // Empresa ativa vem do contexto global (switcher na sidebar troca pra todos os lugares).
+  const { empresas, currentEmpresa, setCurrentEmpresaId } = useEmpresa()
+  const empresaId = currentEmpresa?.id ?? ''
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'todos' | 'agendados' | 'nao_agendados'>('todos')
@@ -82,24 +84,7 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
     setPage(0)
   }, [debouncedQuery, statusFilter, empresaId])
 
-  // Busca empresas
-  useEffect(() => {
-    let cancelled = false
-    empresasApi
-      .list()
-      .then((list) => {
-        if (cancelled) return
-        setEmpresas(list)
-        if (list.length > 0) setEmpresaId((cur) => cur || list[0].id)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Erro ao carregar empresas')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  // (empresas vêm do contexto — sem fetch local)
 
   // Busca a página atual (cancelando requests obsoletas)
   const reqIdRef = useRef(0)
@@ -299,9 +284,10 @@ export function LeadsListView({ onBack, onEdit, onCreateNew, onOpen }: LeadsList
         {empresas.length > 1 && (
           <select
             value={empresaId}
-            onChange={(e) => setEmpresaId(e.target.value)}
+            onChange={(e) => setCurrentEmpresaId(e.target.value)}
             style={{ colorScheme: 'dark' }}
             className="h-10 px-3 rounded-xl bg-[#0c0d10] border border-white/[0.05] text-sm focus:outline-none focus:border-cyan-400/55"
+            title="Troca a empresa ativa do app"
           >
             {empresas.map((e) => (
               <option key={e.id} value={e.id}>{e.nome}</option>

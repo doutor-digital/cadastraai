@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Building2, ArrowRight } from 'lucide-react'
+import { Loader2, Building2, ArrowRight, ArrowLeft } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
+import { useEmpresa } from '@/contexts/empresa-context'
 import { empresasApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -12,46 +13,33 @@ export function CreateEmpresaForm() {
   const [tipo, setTipo] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
-  const [bootstrapping, setBootstrapping] = useState(true)
 
   const { user, isLoading: authLoading } = useAuth()
+  const { empresas, refresh, setCurrentEmpresaId, isLoading: empresasLoading } = useEmpresa()
   const router = useRouter()
 
+  // Apenas redireciona não-autenticado. Usuário com empresas pode criar mais
+  // (multi-tenant: o mesmo dono pode ter Clínica A, B, C).
   useEffect(() => {
     if (authLoading) return
-    if (!user) {
-      router.push('/login')
-      return
-    }
-
-    let cancelled = false
-    empresasApi
-      .list()
-      .then((empresas) => {
-        if (cancelled) return
-        if (empresas.length > 0) {
-          router.push('/dashboard')
-        } else {
-          setBootstrapping(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setBootstrapping(false)
-      })
-    return () => {
-      cancelled = true
-    }
+    if (!user) router.push('/login')
   }, [authLoading, user, router])
+
+  const hasOtherEmpresas = empresas.length > 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setIsLoading(true)
     try {
-      await empresasApi.create({
+      const created = await empresasApi.create({
         nome: nome.trim(),
         tipo: tipo.trim() || undefined,
       })
+      // Atualiza o contexto e ativa a empresa recém-criada para o usuário
+      // já cair logado nela.
+      await refresh()
+      setCurrentEmpresaId(created.id)
       router.push('/dashboard?view=empresa')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao criar empresa')
@@ -60,7 +48,7 @@ export function CreateEmpresaForm() {
     }
   }
 
-  if (authLoading || bootstrapping) {
+  if (authLoading || empresasLoading) {
     return (
       <div className="min-h-screen grid place-items-center bg-linear-to-br from-[#091420] via-[#0d2236] to-[#0a3450]">
         <Loader2 className="h-6 w-6 animate-spin text-cyan-300" />
@@ -71,6 +59,15 @@ export function CreateEmpresaForm() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-[#091420] via-[#0d2236] to-[#0a3450] p-4">
       <div className="w-full max-w-lg">
+        {hasOtherEmpresas && (
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="flex items-center gap-2 text-sm text-cyan-100/60 hover:text-cyan-100 mb-4 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Voltar para o dashboard
+          </button>
+        )}
         <div className="text-center mb-8">
           <div
             className="mx-auto mb-4 h-12 w-12 grid place-items-center rounded-xl"
@@ -82,10 +79,12 @@ export function CreateEmpresaForm() {
             <Building2 className="h-6 w-6 text-[#081420]" strokeWidth={2.5} />
           </div>
           <h1 className="text-3xl font-bold text-slate-50 mb-2 tracking-tight">
-            Cadastrar empresa
+            {hasOtherEmpresas ? 'Nova empresa' : 'Cadastrar empresa'}
           </h1>
           <p className="text-cyan-100/60 text-sm">
-            Esse é seu próximo passo, {user?.name?.split(' ')[0] ?? 'usuário'}. Vamos vincular sua conta a uma empresa.
+            {hasOtherEmpresas
+              ? `Você já tem ${empresas.length === 1 ? '1 empresa' : `${empresas.length} empresas`}. Cada uma fica com seus dados isolados — leads, integrações e equipe separados.`
+              : `Esse é seu próximo passo, ${user?.name?.split(' ')[0] ?? 'usuário'}. Vamos vincular sua conta a uma empresa.`}
           </p>
         </div>
 

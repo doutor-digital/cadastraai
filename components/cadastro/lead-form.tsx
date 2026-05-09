@@ -6,12 +6,11 @@ import { UserPlus, CheckCircle2, AlertCircle, Pencil } from 'lucide-react'
 import { CadastroFormShell } from './form-shell'
 import { TextInput, SelectInput, Segmented, ToggleSwitch } from './form-fields'
 import {
-  empresasApi,
   leadsApi,
   type CreateLeadPayload,
-  type EmpresaDto,
   type LeadDetailDto,
 } from '@/lib/api'
+import { useEmpresa } from '@/contexts/empresa-context'
 import { useConfig } from '@/lib/config-store'
 import type { Lead, LeadFormData } from '@/types'
 import { MOTIVOS_NAO_AGENDAMENTO } from '@/types'
@@ -94,41 +93,16 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
     editing ? fromLead(editing) : { ...initialState, nomeResponsavel: '' },
   )
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
-  const [empresas, setEmpresas] = useState<EmpresaDto[]>([])
-  const [empresaId, setEmpresaId] = useState<string>(editing?.empresaId ?? '')
-  const [empresasLoading, setEmpresasLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  // Empresa ativa vem do contexto global. Edição mantém a empresa original
+  // do lead (não permite trocar empresa de um lead existente).
+  const { empresas, currentEmpresa, isLoading: empresasLoading, setCurrentEmpresaId } = useEmpresa()
+  const empresaId = editing?.empresaId ?? currentEmpresa?.id ?? ''
 
   useEffect(() => {
     if (editing) setData(fromLead(editing))
   }, [editing])
-
-  // Carrega empresas do usuário logado e seleciona a primeira por padrão
-  // (mesmo padrão usado em LeadsListView/import-view).
-  useEffect(() => {
-    let cancelled = false
-    setEmpresasLoading(true)
-    empresasApi
-      .list()
-      .then((list) => {
-        if (cancelled) return
-        setEmpresas(list)
-        setEmpresaId((cur) => cur || (list[0]?.id ?? ''))
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setFeedback({
-          kind: 'error',
-          msg: err instanceof Error ? err.message : 'Erro ao carregar empresas.',
-        })
-      })
-      .finally(() => {
-        if (!cancelled) setEmpresasLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   const set = <K extends keyof LeadFormData>(key: K, value: LeadFormData[K]) =>
     setData((prev) => ({ ...prev, [key]: value }))
@@ -226,11 +200,11 @@ export function LeadForm({ onBack, onSaved, editing }: LeadFormProps) {
           <SelectInput
             label="Empresa"
             value={empresaId}
-            onChange={(e) => setEmpresaId(e.target.value)}
+            onChange={(e) => setCurrentEmpresaId(e.target.value)}
             options={empresas.map((e) => ({ value: e.id, label: e.nome }))}
             placeholder="Selecione a empresa…"
             required
-            hint="O lead será cadastrado nesta empresa."
+            hint="O lead será cadastrado nesta empresa. (troca a empresa ativa do app)"
           />
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

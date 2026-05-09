@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
 import { useStoreCounts, useIsClient } from '@/lib/cadastro-store'
 import { AvatarCircle } from '@/components/ui/avatar-circle'
+import { EmpresaSwitcher } from '@/components/empresa/empresa-switcher'
 
 export type DashboardView =
   | 'dashboard'
@@ -190,6 +191,11 @@ export function DashboardSidebar({ active, onChange }: DashboardSidebarProps) {
           >
             <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} />
           </button>
+        </div>
+
+        {/* Switcher de empresa — sempre visível, mostra qual está ativa e permite criar mais. */}
+        <div className="px-1 pb-2">
+          <EmpresaSwitcher collapsed={collapsed} />
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto pt-1">
