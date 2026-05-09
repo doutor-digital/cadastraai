@@ -54,7 +54,7 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'cloudia',
     label: 'Cloudia',
     description:
-      'CRM principal. Importa as planilhas (Cadastro Geral, Consultas, Tratamentos) e mantém origem, situação e clínica em sincronia com o cadastro.',
+      'CRM principal — modelo webhook-only. Você cola a URL no painel da Cloudia e ela empurra eventos (lead criado, atualizado, etapa, tags, atendente) em tempo real. Sem polling, sem API key.',
     category: 'crm',
     status: 'available',
     accent: 'border-cyan-500/30 hover:border-cyan-400/60',
@@ -272,8 +272,150 @@ export function IntegrationsView({ onBack }: Props) {
         ))}
       </div>
 
-      {/* Receita / regras de automação globais */}
+      {/* Diagrama de correlação dos 3 sistemas */}
+      <SystemMapCard />
+
+      {/* Regras de automação globais */}
       <AutomationRulesCard />
+    </div>
+  )
+}
+
+function SystemMapCard() {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+      <div className="flex items-start gap-3">
+        <div className="rounded-xl bg-cyan-500/10 p-2">
+          <Plug2 className="h-5 w-5 text-cyan-300" />
+        </div>
+        <div className="flex-1 space-y-3">
+          <div>
+            <h3 className="text-base font-semibold text-white">Como os sistemas se conectam</h3>
+            <p className="text-sm text-white/60">
+              Os 3 sistemas compartilham o mesmo backend e o mesmo banco. Cada um faz uma coisa.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr]">
+            {/* Origem */}
+            <SystemNode
+              label="Cloudia"
+              role="Fonte"
+              subtitle="CRM externo"
+              points={[
+                'Webhook → /api/empresas/{id}/cloudia/webhook',
+                'Empurra CUSTOMER_CREATED, UPDATED, STAGE, TAGS, ASSIGNED',
+                'Identifica clínica via data.clinic_id',
+              ]}
+              tone="cyan"
+            />
+            <Arrow />
+            {/* Hub central */}
+            <SystemNode
+              label="LeadAnalytics.Api"
+              role=".NET / Postgres"
+              subtitle="Backend único"
+              points={[
+                'CloudiaAdapter → LeadEvent',
+                'Salva Lead, Contact, Payment, Unit, Attendant',
+                'Filtra tudo por TenantId (clinic_id)',
+                'JWT com tenant_id para os 2 frontends',
+              ]}
+              tone="violet"
+              wide
+            />
+            <Arrow />
+            {/* 2 destinos */}
+            <div className="space-y-3">
+              <SystemNode
+                label="cadastraai (este app)"
+                role="Next.js"
+                subtitle="Operacional"
+                points={[
+                  'Inbox de revisão pré-cadastro',
+                  'Secretárias verificam e promovem',
+                  'CRUD de Lead, Consulta, Tratamento, Recebimento',
+                ]}
+                tone="emerald"
+              />
+              <SystemNode
+                label="Doutor-Digital-Front"
+                role="Vite/React"
+                subtitle="Analítico"
+                points={[
+                  'Dashboards: Finance, Funil, Cohort, SLA',
+                  'Read-only sobre o mesmo banco',
+                  'Mesmo JWT, mesmo tenant_id',
+                ]}
+                tone="amber"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/5 bg-black/20 p-3 text-xs text-white/60">
+            <span className="font-medium text-white/85">Fluxo de um lead novo:</span>{' '}
+            Cloudia dispara webhook →{' '}
+            <code className="rounded bg-white/5 px-1">/api/empresas/{`{id}`}/cloudia/webhook</code> valida secret e
+            <code className="rounded bg-white/5 px-1">data.clinic_id</code> →{' '}
+            <code className="rounded bg-white/5 px-1">CloudiaAdapter</code> mapeia para{' '}
+            <code className="rounded bg-white/5 px-1">LeadEvent</code> →{' '}
+            <code className="rounded bg-white/5 px-1">LeadService.SaveLeadAsync</code> persiste com{' '}
+            <code className="rounded bg-white/5 px-1">TenantId</code> → cadastraai mostra no inbox →
+            secretária promove → dashboard Vite reflete imediatamente nos KPIs.
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SystemNode({
+  label,
+  role,
+  subtitle,
+  points,
+  tone,
+  wide = false,
+}: {
+  label: string
+  role: string
+  subtitle: string
+  points: string[]
+  tone: 'cyan' | 'violet' | 'emerald' | 'amber'
+  wide?: boolean
+}) {
+  const palette: Record<typeof tone, { border: string; bg: string; chip: string }> = {
+    cyan:    { border: 'border-cyan-500/30',    bg: 'bg-cyan-500/[0.05]',    chip: 'text-cyan-300' },
+    violet:  { border: 'border-violet-500/30',  bg: 'bg-violet-500/[0.05]',  chip: 'text-violet-300' },
+    emerald: { border: 'border-emerald-500/30', bg: 'bg-emerald-500/[0.05]', chip: 'text-emerald-300' },
+    amber:   { border: 'border-amber-500/30',   bg: 'bg-amber-500/[0.05]',   chip: 'text-amber-300' },
+  }
+  const p = palette[tone]
+  return (
+    <div className={cn('rounded-xl border p-3', p.border, p.bg, wide && 'lg:min-h-[180px]')}>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-sm font-semibold text-white">{label}</p>
+        <span className={cn('text-[10px] uppercase tracking-wider', p.chip)}>{role}</span>
+      </div>
+      <p className="text-[11px] text-white/50">{subtitle}</p>
+      <ul className="mt-2 space-y-1 text-[11px] text-white/70">
+        {points.map((pt, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            <span className={cn('mt-1 h-1 w-1 shrink-0 rounded-full', p.chip)} />
+            <span>{pt}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function Arrow() {
+  return (
+    <div className="hidden items-center justify-center text-white/30 lg:flex">
+      <svg width="24" height="20" viewBox="0 0 24 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M0 10 H22 M16 4 L22 10 L16 16" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </div>
   )
 }
@@ -508,23 +650,41 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
   const out: IntegrationStatusDto[] = []
   await Promise.allSettled([
     cloudiaApi
-      .getConfig(empresaId)
+      .getWebhookConfig(empresaId)
       .then((cfg) => {
         if (cfg) {
+          // "Conectado" = recebeu pelo menos um evento OU tem secret + clinic_id configurados.
+          const armed = !!cfg.cloudiaClinicId && cfg.hasWebhookSecret
+          const connected = cfg.totalReceived > 0 || armed
+          const summary = armed
+            ? `clinic_id ${cfg.cloudiaClinicId} • secret ativo`
+            : cfg.totalReceived > 0
+              ? `${cfg.totalReceived} eventos recebidos`
+              : 'aguardando primeiro evento'
           out.push({
             provider: 'cloudia',
             empresaId,
-            connected: cfg.hasApiKey,
-            summary: cfg.baseUrl ? `Base URL: ${cfg.baseUrl}` : null,
-            lastSyncAt: cfg.lastSyncAt ?? null,
-            webhookUrl: buildCloudiaWebhookUrl(empresaId, cfg.webhookSecret),
+            connected,
+            summary,
+            lastSyncAt: cfg.lastReceivedAt ?? null,
+            webhookUrl: buildCloudiaWebhookUrl(empresaId),
           })
         } else {
-          out.push({ provider: 'cloudia', empresaId, connected: false })
+          out.push({
+            provider: 'cloudia',
+            empresaId,
+            connected: false,
+            webhookUrl: buildCloudiaWebhookUrl(empresaId),
+          })
         }
       })
       .catch(() => {
-        out.push({ provider: 'cloudia', empresaId, connected: false })
+        out.push({
+          provider: 'cloudia',
+          empresaId,
+          connected: false,
+          webhookUrl: buildCloudiaWebhookUrl(empresaId),
+        })
       }),
     kommoApi
       .getConfig(empresaId)

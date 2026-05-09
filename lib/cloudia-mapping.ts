@@ -1,10 +1,16 @@
-// Mapeamento autoritativo entre as colunas das planilhas da Cloudia e os 3 sistemas:
-//   1) cadastraai (front Next.js — lead-form, consulta-form, tratamento-form)
-//   2) LeadAnalytics.Api (.NET — Lead, Contact, Payment, Unit, Attendant)
-//   3) Doutor-Digital-Front (Vite — tabelas Finance, Contacts, Attendants)
+// Mapeamento autoritativo Cloudia → cadastraai → LeadAnalytics.Api → Vite Dashboard.
 //
-// Cada empresa só vê suas próprias linhas — a isolação é feita server-side via tenant_id
-// (claim no JWT). O front nunca decide "que empresa eu sou": pega o token e o backend filtra.
+// Como funciona o fluxo:
+//   1. Empresa cola a URL `/api/empresas/{empresaId}/cloudia/webhook` no painel da Cloudia
+//   2. Cloudia faz POST com CloudiaWebhookDto a cada evento (criar/atualizar/etc.)
+//   3. Backend (.NET) valida secret HMAC, lê data.clinic_id, salva como Lead+Contact
+//      tageado com o TenantId da empresa
+//   4. cadastraai mostra no inbox para a secretária verificar e promover
+//   5. Doutor-Digital-Front (Vite) lê o mesmo banco em modo read-only para os dashboards
+//
+// Cada empresa só vê suas próprias linhas — isolamento server-side via tenant_id no JWT.
+// Para o webhook (sem JWT), o tenant é inferido pelo empresaId no path E pelo data.clinic_id
+// salvo na config. Webhook com clinic_id divergente é rejeitado (defesa em profundidade).
 
 import type { KommoFieldTarget } from '@/lib/api'
 
@@ -17,8 +23,92 @@ export type CadastroFieldTarget =
   | 'dataOrigem'
   | 'dataModificacao'
 
-// ---- Planilha 1: "Cadastro Geral" (leads) ----
-// Colunas vindas da Cloudia → campo no lead-form do cadastraai → entidade .NET
+// ----------------------------------------------------------------------------
+// Mapeamento canônico: campos do payload do webhook Cloudia
+// ----------------------------------------------------------------------------
+// Este é o mapeamento REAL que o backend usa. As colunas das planilhas são
+// derivadas destes campos.
+export interface WebhookField {
+  // Caminho dentro do payload da Cloudia (ex.: "data.name", "data.tags[].name").
+  path: string
+  cadastroTarget: CadastroFieldTarget | null
+  netEntity: 'Lead' | 'Contact' | 'Unit' | 'Attendant' | 'User' | 'Payment' | null
+  netField: string | null
+  notes?: string
+}
+
+export const CLOUDIA_WEBHOOK_FIELDS: WebhookField[] = [
+  { path: 'type',                            cadastroTarget: null,                   netEntity: null,        netField: null,                  notes: 'Evento (CUSTOMER_CREATED, CUSTOMER_UPDATED, etc.). Decide se é insert ou update.' },
+  { path: 'data.id',                         cadastroTarget: null,                   netEntity: 'Lead',      netField: 'ExternalId',          notes: 'ID Cloudia. Chave de deduplicação.' },
+  { path: 'data.clinic_id',                  cadastroTarget: 'clinica',              netEntity: 'Unit',      netField: 'ClinicId',            notes: 'CHAVE DE TENANT. Validado contra cloudiaClinicId da empresa antes de aceitar.' },
+  { path: 'data.name',                       cadastroTarget: 'nome',                 netEntity: 'Lead',      netField: 'Name' },
+  { path: 'data.phone',                      cadastroTarget: 'telefone',             netEntity: 'Contact',   netField: 'PhoneRaw',            notes: 'Normalizar p/ E.164 → Contact.PhoneNormalized (chave de dedup interna).' },
+  { path: 'data.email',                      cadastroTarget: null,                   netEntity: 'Lead',      netField: 'Email' },
+  { path: 'data.cpf',                        cadastroTarget: null,                   netEntity: 'Lead',      netField: 'Cpf' },
+  { path: 'data.gender',                     cadastroTarget: null,                   netEntity: 'Lead',      netField: 'Gender' },
+  { path: 'data.origin',                     cadastroTarget: 'origem',               netEntity: 'Lead',      netField: 'Source',              notes: 'Casado contra CLOUDIA_ORIGENS — fallback "Sem origem".' },
+  { path: 'data.has_health_insurance_plan',  cadastroTarget: null,                   netEntity: 'Lead',      netField: 'HasHealthInsurancePlan' },
+  { path: 'data.created_at',                 cadastroTarget: 'dataOrigem',           netEntity: 'Lead',      netField: 'CreatedAt' },
+  { path: 'data.last_updated_at',            cadastroTarget: 'dataModificacao',      netEntity: 'Lead',      netField: 'LastUpdatedAt' },
+  { path: 'data.observations',               cadastroTarget: 'observacao',           netEntity: 'Lead',      netField: 'Observations' },
+  { path: 'data.stage',                      cadastroTarget: 'situacao',             netEntity: 'Lead',      netField: 'CurrentStage',        notes: 'Texto da etapa (ex.: "Agendado").' },
+  { path: 'data.id_stage',                   cadastroTarget: null,                   netEntity: 'Lead',      netField: 'CurrentStageId' },
+  { path: 'data.conversationState',          cadastroTarget: 'interacao',            netEntity: 'Lead',      netField: 'ConversationState',   notes: 'Sim/Não derivado: "active" ou "bot" → true.' },
+  { path: 'data.id_whatsapp',                cadastroTarget: null,                   netEntity: 'Contact',   netField: 'IdChannelIntegration' },
+  { path: 'data.registered_on_whatsapp',     cadastroTarget: null,                   netEntity: null,        netField: null,                  notes: 'Flag — só para enriquecer canal.' },
+  { path: 'data.tags[].name',                cadastroTarget: null,                   netEntity: 'Lead',      netField: 'Tags',                notes: 'Array → tipoResgate via regras de tag-mapping.' },
+  { path: 'data.ad_data',                    cadastroTarget: null,                   netEntity: 'Lead',      netField: 'IdFacebookApp',       notes: 'Atribuição Meta. Vai para Insights/CAPI.' },
+  { path: 'data.last_ad_id',                 cadastroTarget: null,                   netEntity: 'Lead',      netField: 'LastAdId' },
+  { path: 'assigned_user_id',                cadastroTarget: null,                   netEntity: 'Attendant', netField: 'ExternalId',          notes: 'Só vem em USER_ASSIGNED_TO_CUSTOMER.' },
+  { path: 'assigned_user_name',              cadastroTarget: 'nomeResponsavel',      netEntity: 'Attendant', netField: 'Name' },
+  { path: 'assigned_user_email',             cadastroTarget: 'login',                netEntity: 'Attendant', netField: 'Email' },
+]
+
+// Eventos que a Cloudia dispara — o que esperar de cada um.
+export const CLOUDIA_EVENT_TYPES: { type: import('@/lib/api').CloudiaEventType; label: string; description: string; recommended: boolean }[] = [
+  { type: 'CUSTOMER_CREATED',           label: 'Lead criado',          description: 'Novo lead aparece na Cloudia. Vai p/ inbox como pendente.',     recommended: true },
+  { type: 'CUSTOMER_UPDATED',           label: 'Lead atualizado',      description: 'Mudança em qualquer campo do lead. Atualiza pelo data.id.',     recommended: true },
+  { type: 'CUSTOMER_STAGE_UPDATED',     label: 'Etapa alterada',       description: 'Lead mudou de stage. Atualiza Lead.CurrentStage e StageHistory.', recommended: true },
+  { type: 'CUSTOMER_TAGS_UPDATED',      label: 'Tags alteradas',       description: 'Aplicar regras tag→tipoResgate (resgate, fechado, etc.).',      recommended: true },
+  { type: 'USER_ASSIGNED_TO_CUSTOMER',  label: 'Atendente atribuído',  description: 'Define nomeResponsavel via assigned_user_*.',                    recommended: true },
+]
+
+// Payload de exemplo (igual ao que a Cloudia envia).
+export const CLOUDIA_SAMPLE_PAYLOAD = {
+  type: 'CUSTOMER_CREATED',
+  data: {
+    id: 12345,
+    clinic_id: 789,
+    name: 'João da Silva',
+    phone: '+55 11 98765-4321',
+    email: 'joao@example.com',
+    cpf: '123.456.789-00',
+    gender: 'M',
+    origin: 'Campanha Meta (Instagram)',
+    has_health_insurance_plan: false,
+    created_at: '2026-05-08T10:30:00Z',
+    last_updated_at: '2026-05-08T10:30:00Z',
+    observations: 'Lead chegou pelo Instagram',
+    stage: 'Aguardando contato',
+    id_stage: 42,
+    conversationState: 'active',
+    id_whatsapp: '5511987654321',
+    registered_on_whatsapp: 1,
+    tags: [{ id: 1, name: 'instagram' }],
+    ad_data: [],
+    last_ad_id: 'ad_98765',
+  },
+  customer: null,
+  assigned_user_id: 99,
+  assigned_user_name: 'Maria',
+  assigned_user_email: 'maria@clinic.com',
+}
+
+// ----------------------------------------------------------------------------
+// Mapeamento auxiliar: colunas das planilhas (mesmo conteúdo, visão derivada)
+// ----------------------------------------------------------------------------
+// As planilhas que a Cloudia exporta usam labels em PT-BR. Mantenho aqui
+// para a UI mostrar a equivalência com os campos do webhook.
 export interface SpreadsheetField {
   column: string
   cadastroTarget: CadastroFieldTarget | null
@@ -176,38 +266,55 @@ export const CLOUDIA_MOTIVOS_NAO_AGENDAMENTO = [
 // ---- Formas de pagamento (vão para Payment.PaymentMethod) ----
 export const CLOUDIA_FORMAS_PAGAMENTO = ['pix', 'dinheiro', 'debito', 'credito', 'boleto'] as const
 
-// ---- Helper: dado um valor literal da Cloudia, retorna o que preencher no lead-form ----
-export function cloudiaToLeadForm(row: Record<string, string>) {
-  const origem = (row['Origem Cadastro'] ?? row['Origem'] ?? '').trim()
-  const tipoRaw = (row['Tipo'] ?? '').trim()
-  const isResgate = tipoRaw.toLowerCase() === 'resgate' || CLOUDIA_RESGATE_ORIGENS.includes(origem as CloudiaOrigem)
+// ---- Helper: dado o payload do webhook Cloudia, retorna o que preencher no lead-form ----
+// Espelha a lógica do CloudiaAdapter.cs no backend (.NET) — útil para:
+//   (a) preview na UI antes do evento ir pro inbox,
+//   (b) testes unitários do mapeamento.
+import type { CloudiaWebhookEventDto } from '@/lib/api'
+
+interface CloudiaPayloadShape {
+  type?: string
+  data?: {
+    id?: number
+    clinic_id?: number
+    name?: string
+    phone?: string
+    origin?: string
+    stage?: string
+    conversationState?: string
+    tags?: { id: number; name: string }[]
+    created_at?: string
+    last_updated_at?: string
+    observations?: string
+  }
+  assigned_user_name?: string
+  assigned_user_email?: string
+}
+
+export function cloudiaWebhookToLeadForm(payload: CloudiaPayloadShape) {
+  const data = payload.data ?? {}
+  const origem = (data.origin ?? '').trim()
+  const isResgate = CLOUDIA_RESGATE_ORIGENS.includes(origem as CloudiaOrigem)
+  const interacao = data.conversationState === 'active' || data.conversationState === 'bot'
   return {
-    nome: (row['Nome do Cliente'] ?? row['Nome'] ?? '').trim(),
-    telefone: (row['Telefone'] ?? '').trim(),
+    nome: (data.name ?? '').trim(),
+    telefone: (data.phone ?? '').trim(),
     origem: origem || 'Sem origem',
     tipo: isResgate ? 'Resgate' : 'Cadastro',
-    tipoResgate: isResgate ? CLOUDIA_RESGATE_TIPO[origem] ?? undefined : undefined,
-    interacao: yn(row['Interação']),
-    agendouConsulta: yn(row['Cliente Agendou?']),
-    dataAgendamento: parseBrDate(row['Data do Agendamento']),
-    motivoNaoAgendamento: yn(row['Cliente Agendou?']) ? undefined : (row['Motivo para Não Agendamento'] || undefined),
-    pagamentoAntecipado: yn(row['Pagamento Antecipado']),
-    nomeResponsavel: (row['Nome Responsável'] ?? '').trim(),
+    tipoResgate: isResgate ? CLOUDIA_RESGATE_TIPO[origem] : undefined,
+    interacao,
+    agendouConsulta: (data.stage ?? '').toLowerCase().includes('agendad'),
+    pagamentoAntecipado: false,
+    nomeResponsavel: (payload.assigned_user_name ?? '').trim(),
+    observacao: (data.observations ?? '').trim() || undefined,
   }
 }
 
-function yn(v: string | undefined): boolean {
-  if (!v) return false
-  const s = v.trim().toLowerCase()
-  return s === 'sim' || s === 'yes' || s === 'true' || s === '1'
-}
-
-function parseBrDate(v: string | undefined): string | undefined {
-  if (!v) return undefined
-  // "04/05/2026" ou "04/05/2026 15:50:50"
-  const m = v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
-  if (!m) return undefined
-  const [, d, mo, y, h = '00', mi = '00', s = '00'] = m
-  const iso = `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}T${h.padStart(2, '0')}:${mi}:${s}`
-  return iso
+// Para o histórico de eventos: parse seguro do raw JSON.
+export function parseCloudiaEvent(event: CloudiaWebhookEventDto): CloudiaPayloadShape | null {
+  try {
+    return JSON.parse(event.rawPayload) as CloudiaPayloadShape
+  } catch {
+    return null
+  }
 }

@@ -1028,40 +1028,68 @@ export interface IntegrationStatusDto {
   errorMessage?: string | null
 }
 
-// ----- Cloudia (CRM principal — fonte das planilhas que abastecem o cadastro) -----
-export interface CloudiaConfigDto {
-  baseUrl: string
-  hasApiKey: boolean
-  apiKeySuffix?: string | null
-  webhookSecret?: string | null
+// ----- Cloudia (CRM externo, webhook-only) -----
+// A Cloudia NÃO é consultada por API: ela faz POST p/ a URL que a empresa cola
+// no painel dela. O backend recebe, valida o secret (opcional, HMAC) e despacha
+// para o inbox. O `clinic_id` que vem no payload é a chave de isolamento.
+export interface CloudiaWebhookConfigDto {
+  empresaId: string
+  // Secret HMAC opcional. Se preenchido, o backend exige header
+  // x-cloudia-signature em cada requisição recebida.
   hasWebhookSecret: boolean
-  lastSyncAt?: string | null
+  webhookSecretSuffix?: string | null
+  // clinic_id da Cloudia que esta empresa "possui". Webhooks com clinic_id
+  // diferente são rejeitados (defesa em profundidade).
+  cloudiaClinicId?: number | null
+  lastReceivedAt?: string | null
+  totalReceived: number
+  totalProcessed: number
+  totalRejected: number
 }
 
-export interface SaveCloudiaConfigPayload {
-  baseUrl: string
-  apiKey: string
+export interface SaveCloudiaWebhookPayload {
   webhookSecret?: string
+  cloudiaClinicId?: number | null
 }
 
-export interface CloudiaSyncResponseDto {
-  received: number
-  stored: number
-  promoted: number
-  lastSyncAt: string
+// Tipos exatos do que a Cloudia manda (espelha CloudiaWebhookDto no backend).
+export type CloudiaEventType =
+  | 'CUSTOMER_CREATED'
+  | 'CUSTOMER_UPDATED'
+  | 'CUSTOMER_STAGE_UPDATED'
+  | 'CUSTOMER_TAGS_UPDATED'
+  | 'USER_ASSIGNED_TO_CUSTOMER'
+
+export interface CloudiaWebhookEventDto {
+  id: string
+  empresaId: string
+  receivedAt: string
+  eventType: CloudiaEventType
+  cloudiaClinicId?: number | null
+  cloudiaCustomerId?: number | null
+  status: 'processed' | 'rejected' | 'pending'
+  rejectionReason?: string | null
+  // Lead que foi promovido a partir do evento (se houve).
+  cadastroLeadId?: string | null
+  rawPayload: string
 }
 
 export const cloudiaApi = {
-  getConfig: (empresaId: string) =>
-    api.get<CloudiaConfigDto | null>(`/api/empresas/${empresaId}/cloudia/config`),
-  saveConfig: (empresaId: string, data: SaveCloudiaConfigPayload) =>
-    api.put<CloudiaConfigDto>(`/api/empresas/${empresaId}/cloudia/config`, data),
-  testConnection: (empresaId: string) =>
-    api.get<{ ok: boolean; account?: { name: string } | null; errorMessage?: string | null }>(
-      `/api/empresas/${empresaId}/cloudia/test-connection`,
+  getWebhookConfig: (empresaId: string) =>
+    api.get<CloudiaWebhookConfigDto | null>(`/api/empresas/${empresaId}/cloudia/webhook-config`),
+  saveWebhookConfig: (empresaId: string, data: SaveCloudiaWebhookPayload) =>
+    api.put<CloudiaWebhookConfigDto>(`/api/empresas/${empresaId}/cloudia/webhook-config`, data),
+  // Histórico dos últimos eventos recebidos.
+  history: (empresaId: string, params?: { status?: 'processed' | 'rejected' | 'pending'; limit?: number }) =>
+    api.get<CloudiaWebhookEventDto[]>(`/api/empresas/${empresaId}/cloudia/webhook-events`, {
+      ...(params?.status ? { status: params.status } : {}),
+      ...(params?.limit ? { limit: String(params.limit) } : {}),
+    }),
+  // Reprocessa um evento que falhou.
+  retry: (empresaId: string, eventId: string) =>
+    api.post<CloudiaWebhookEventDto>(
+      `/api/empresas/${empresaId}/cloudia/webhook-events/${eventId}/retry`,
     ),
-  sync: (empresaId: string, body?: { since?: string; limit?: number }) =>
-    api.post<CloudiaSyncResponseDto>(`/api/empresas/${empresaId}/cloudia/sync`, body ?? {}),
 }
 
 export function buildCloudiaWebhookUrl(empresaId: string, secret?: string | null): string {
