@@ -262,7 +262,7 @@ export function IntegrationsView({ onBack }: Props) {
             key={p.id}
             meta={p}
             status={statuses[p.id]}
-            empresaId={empresaId}
+            empresa={empresaAtual}
             loading={loading}
             onOpen={() => {
               if (p.id === 'cloudia') setDetail('cloudia')
@@ -423,16 +423,16 @@ function Arrow() {
 interface ProviderCardProps {
   meta: ProviderMeta
   status: IntegrationStatusDto | null
-  empresaId: string | null
+  empresa: EmpresaDto | null
   loading: boolean
   onOpen: () => void
 }
 
-function ProviderCard({ meta, status, empresaId, loading, onOpen }: ProviderCardProps) {
+function ProviderCard({ meta, status, empresa, loading, onOpen }: ProviderCardProps) {
   const connected = status?.connected ?? false
   const hasError = !!status?.errorMessage
   const canOpen = meta.status === 'available' || meta.status === 'beta'
-  const webhookUrl = empresaId ? buildGenericWebhookUrl(empresaId, meta.id) : null
+  const webhookUrl = empresa ? buildGenericWebhookUrl(empresa, meta.id) : null
   const hasDetailView = meta.id === 'cloudia' || meta.id === 'kommo'
 
   return (
@@ -508,7 +508,7 @@ function ProviderCard({ meta, status, empresaId, loading, onOpen }: ProviderCard
         ) : hasDetailView ? (
           <button
             onClick={onOpen}
-            disabled={!canOpen || !empresaId}
+            disabled={!canOpen || !empresa}
             className={cn(
               'flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors',
               connected
@@ -647,13 +647,22 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
   }
 
   // Fallback: pergunta cada provider individualmente. Falhas viram "não conectado".
+  // Para construir URLs curtas precisamos do EmpresaDto completo (com webhookShortCode).
+  let empresa: { id: string; webhookShortCode?: string | null } = { id: empresaId }
+  try {
+    const list = await empresasApi.list()
+    const found = list.find((e) => e.id === empresaId)
+    if (found) empresa = found
+  } catch {
+    // Se falhar, segue com fallback de UUID na URL.
+  }
+
   const out: IntegrationStatusDto[] = []
   await Promise.allSettled([
     cloudiaApi
       .getWebhookConfig(empresaId)
       .then((cfg) => {
         if (cfg) {
-          // "Conectado" = recebeu pelo menos um evento OU tem secret + clinic_id configurados.
           const armed = !!cfg.cloudiaClinicId && cfg.hasWebhookSecret
           const connected = cfg.totalReceived > 0 || armed
           const summary = armed
@@ -667,14 +676,14 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
             connected,
             summary,
             lastSyncAt: cfg.lastReceivedAt ?? null,
-            webhookUrl: buildCloudiaWebhookUrl(empresaId),
+            webhookUrl: buildCloudiaWebhookUrl(empresa),
           })
         } else {
           out.push({
             provider: 'cloudia',
             empresaId,
             connected: false,
-            webhookUrl: buildCloudiaWebhookUrl(empresaId),
+            webhookUrl: buildCloudiaWebhookUrl(empresa),
           })
         }
       })
@@ -683,7 +692,7 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
           provider: 'cloudia',
           empresaId,
           connected: false,
-          webhookUrl: buildCloudiaWebhookUrl(empresaId),
+          webhookUrl: buildCloudiaWebhookUrl(empresa),
         })
       }),
     kommoApi
@@ -696,7 +705,7 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
             connected: cfg.hasToken,
             summary: cfg.subdomain ? `Subdomain: ${cfg.subdomain}` : null,
             lastSyncAt: cfg.lastSyncAt ?? null,
-            webhookUrl: buildKommoWebhookUrl(empresaId),
+            webhookUrl: buildKommoWebhookUrl(empresa),
           })
         } else {
           out.push({ provider: 'kommo', empresaId, connected: false })
@@ -712,7 +721,7 @@ async function fetchAggregateOrFallback(empresaId: string): Promise<IntegrationS
       provider: p,
       empresaId,
       connected: false,
-      webhookUrl: buildGenericWebhookUrl(empresaId, p),
+      webhookUrl: buildGenericWebhookUrl(empresa, p),
     })
   }
   return out

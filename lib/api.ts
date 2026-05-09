@@ -158,6 +158,11 @@ export interface EmpresaDto {
   createdAt: string
   memberCount: number
   myRole: MembershipRole
+  // Código curto (base62, ~8 chars) usado nas URLs públicas de webhook.
+  // Trocamos `/api/empresas/{uuid}/cloudia/webhook` (98 chars) por
+  // `/wh/c/{shortCode}` (~46 chars) porque a Cloudia limita o webhook a 100 chars.
+  // Backend gera no momento da criação e nunca muda. Único globalmente.
+  webhookShortCode?: string | null
 }
 
 export interface MemberDto {
@@ -998,12 +1003,26 @@ export function isBackendNotImplemented(error: unknown): boolean {
   return false
 }
 
-// URL pública do webhook que o usuário cola na Kommo. Construída no client porque
-// depende do API_BASE_URL configurado.
-export function buildKommoWebhookUrl(empresaId: string, secret?: string | null): string {
+// URL pública do webhook. CRÍTICO: Cloudia (e outras CRMs) limitam a URL a 100 chars.
+// Por isso preferimos a forma curta `/wh/{provider}/{shortCode}` quando o backend
+// já gerou o shortCode da empresa. O secret NUNCA vai na URL — é a chave de HMAC
+// que a Cloudia usa para assinar o payload (header x-cloudia-signature).
+type ShortProvider = 'c' /* cloudia */ | 'k' /* kommo */ | 'm' /* meta */ | 'g' /* google */ | 'n' /* n8n */ | 'w' /* webhook */
+
+function buildShortWebhook(empresa: { id: string; webhookShortCode?: string | null }, provider: ShortProvider, longTail: string): string {
   const base = API_BASE_URL.replace(/\/$/, '')
-  const s = secret ? `?secret=${encodeURIComponent(secret)}` : ''
-  return `${base}/api/empresas/${empresaId}/kommo/webhook${s}`
+  if (empresa.webhookShortCode) {
+    return `${base}/wh/${provider}/${empresa.webhookShortCode}`
+  }
+  // Fallback: forma longa por UUID. Usado enquanto o backend não popula shortCode.
+  return `${base}/api/empresas/${empresa.id}/${longTail}`
+}
+
+export function buildKommoWebhookUrl(
+  empresaOrId: string | { id: string; webhookShortCode?: string | null },
+): string {
+  const empresa = typeof empresaOrId === 'string' ? { id: empresaOrId } : empresaOrId
+  return buildShortWebhook(empresa, 'k', 'kommo/webhook')
 }
 
 // ============================================================================
@@ -1092,17 +1111,30 @@ export const cloudiaApi = {
     ),
 }
 
-export function buildCloudiaWebhookUrl(empresaId: string, secret?: string | null): string {
-  const base = API_BASE_URL.replace(/\/$/, '')
-  const s = secret ? `?secret=${encodeURIComponent(secret)}` : ''
-  return `${base}/api/empresas/${empresaId}/cloudia/webhook${s}`
+export function buildCloudiaWebhookUrl(
+  empresaOrId: string | { id: string; webhookShortCode?: string | null },
+): string {
+  const empresa = typeof empresaOrId === 'string' ? { id: empresaOrId } : empresaOrId
+  return buildShortWebhook(empresa, 'c', 'cloudia/webhook')
 }
 
 // ----- Webhook genérico (Meta, N8N, Zapier, Make, etc.) -----
 // Endpoint único, com header x-source que diferencia o provider.
-export function buildGenericWebhookUrl(empresaId: string, provider: IntegrationProvider): string {
-  const base = API_BASE_URL.replace(/\/$/, '')
-  return `${base}/api/empresas/${empresaId}/webhooks/${provider}`
+const PROVIDER_SHORT: Record<IntegrationProvider, ShortProvider> = {
+  cloudia: 'c',
+  kommo: 'k',
+  meta: 'm',
+  google: 'g',
+  n8n: 'n',
+  webhook: 'w',
+}
+
+export function buildGenericWebhookUrl(
+  empresaOrId: string | { id: string; webhookShortCode?: string | null },
+  provider: IntegrationProvider,
+): string {
+  const empresa = typeof empresaOrId === 'string' ? { id: empresaOrId } : empresaOrId
+  return buildShortWebhook(empresa, PROVIDER_SHORT[provider], `webhooks/${provider}`)
 }
 
 // Hub: status agregado de todas as integrações de uma empresa.

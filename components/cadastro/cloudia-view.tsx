@@ -187,7 +187,10 @@ function WebhookTab({
     if (cfg?.cloudiaClinicId != null) setClinicId(String(cfg.cloudiaClinicId))
   }, [cfg])
 
-  const webhookUrl = buildCloudiaWebhookUrl(empresa.id, secret || undefined)
+  const webhookUrl = buildCloudiaWebhookUrl(empresa)
+  const urlLength = webhookUrl.length
+  const overLimit = urlLength > 100
+  const longForm = !empresa.webhookShortCode
 
   async function handleSave() {
     setSaving(true)
@@ -223,14 +226,29 @@ function WebhookTab({
     <div className="space-y-6">
       {/* URL principal */}
       <section className="space-y-4 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/[0.06] to-fuchsia-500/[0.04] p-5">
-        <div className="flex items-start gap-2">
-          <Webhook className="mt-0.5 h-4 w-4 text-cyan-300" />
-          <div>
-            <h3 className="font-semibold text-white">URL para colar no painel da Cloudia</h3>
-            <p className="text-xs text-white/65">
-              Único passo de conexão. Cloudia passa a empurrar eventos em tempo real para esta URL.
-            </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <Webhook className="mt-0.5 h-4 w-4 text-cyan-300" />
+            <div>
+              <h3 className="font-semibold text-white">URL para colar no painel da Cloudia</h3>
+              <p className="text-xs text-white/65">
+                Único passo de conexão. Cloudia passa a empurrar eventos em tempo real para esta URL.
+              </p>
+            </div>
           </div>
+          <span
+            className={cn(
+              'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium tabular-nums',
+              overLimit
+                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                : urlLength > 80
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
+            )}
+            title="Cloudia limita o webhook a 100 caracteres"
+          >
+            {urlLength} / 100
+          </span>
         </div>
 
         <div className="space-y-2">
@@ -245,6 +263,29 @@ function WebhookTab({
             {copied === 'url' ? 'Copiado' : 'Copiar URL'}
           </button>
         </div>
+
+        {longForm && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-2.5 text-[11px] text-amber-100/85">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span>
+              Esta empresa ainda não tem código curto.{' '}
+              <strong>O backend precisa gerar </strong>
+              <code className="rounded bg-black/30 px-1">Empresa.WebhookShortCode</code> (8 chars base62) e expor
+              a rota <code className="rounded bg-black/30 px-1">/wh/c/{`{shortCode}`}</code>. Enquanto isso a URL
+              usa a forma longa pelo UUID.
+            </span>
+          </div>
+        )}
+
+        {overLimit && (
+          <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/[0.08] p-2.5 text-[11px] text-rose-100">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-300" />
+            <span>
+              URL acima de 100 caracteres — Cloudia vai recusar. Avise o backend para gerar o{' '}
+              <code className="rounded bg-black/30 px-1">webhookShortCode</code> desta empresa.
+            </span>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 pt-2 text-center">
           <Stat label="Recebidos" value={cfg?.totalReceived ?? 0} tone="cyan" />

@@ -717,8 +717,8 @@ function ConfigTab({
   }, [config])
 
   const webhookUrl = useMemo(() => {
-    return buildKommoWebhookUrl(empresaId, config?.hasWebhookSecret ? '<seu-secret>' : null)
-  }, [empresaId, config?.hasWebhookSecret])
+    return buildKommoWebhookUrl(empresaId)
+  }, [empresaId])
 
   async function save() {
     if (!subdomain || (!token && !config?.hasToken)) {
